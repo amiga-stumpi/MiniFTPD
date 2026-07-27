@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project steps 1 and 2 are complete:
+Project steps 1 through 3 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -19,8 +19,13 @@ Project steps 1 and 2 are complete:
 - strict `miniftpd.conf` loading and validation
 - automatic default configuration creation
 - effective configuration summary without password disclosure
+- one-client TCP control listener on the configured port
+- `WaitSelect()`-driven control connection handling
+- bounded CRLF command parsing and partial socket-write handling
 
-No FTP port is opened in this development build yet.
+The current protocol skeleton accepts `QUIT`. Other commands receive a
+standards-compliant `502 Command not implemented` response until their
+respective roadmap phases are implemented.
 
 ## Build
 
@@ -55,6 +60,27 @@ Configuration loading and validation are implemented. If the file is missing,
 MiniFTPD creates it beside the executable using safe defaults. Unknown keys,
 malformed values, reversed passive-port ranges and oversized files stop startup
 with an error. The configured password is never printed.
+
+## Step 3 test
+
+Start MiniFTPD on the Amiga and connect from another machine:
+
+```sh
+nc AMIGA_IP 21
+```
+
+The control connection should behave as follows:
+
+```text
+220 MiniFTPD ready.
+NOOP
+502 Command not implemented.
+QUIT
+221 MiniFTPD closing connection.
+```
+
+Only one client is accepted at a time. A second connection receives
+`421 MiniFTPD is busy`.
 
 ## Documentation
 

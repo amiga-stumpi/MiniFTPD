@@ -7,6 +7,7 @@
 
 #include "miniftpd/app.h"
 #include "miniftpd/config.h"
+#include "miniftpd/server.h"
 
 static const char version_tag[] =
     "$VER: " MINIFTPD_NAME " " MINIFTPD_VERSION " (27.07.2026)";
@@ -59,7 +60,11 @@ int main(int argc, char **argv)
         return 20;
     }
     console_puts("bsdsocket.library found.\n");
-    console_puts("Project step 2 ready. FTP listener is not implemented yet.\n");
+    if (!miniftpd_server_run(socket_base, &config)) {
+        console_puts("MiniFTPD server failed.\n");
+        CloseLibrary(socket_base);
+        return 20;
+    }
     CloseLibrary(socket_base);
     return 0;
 }

@@ -9,7 +9,7 @@ updated here in the same commit as its implementation.
 |---:|---|---|
 | 1 | Project foundation | Complete |
 | 2 | Configuration | Complete |
-| 3 | TCP control connection | Planned |
+| 3 | TCP control connection | Complete |
 | 4 | Session state | Planned |
 | 5 | Authentication | Planned |
 | 6 | Passive data connections | Planned |
@@ -61,12 +61,19 @@ Status: **Complete**
 
 ## 3. TCP control connection
 
+Status: **Complete**
+
 - Create, bind and listen on the configured control port.
 - Initially accept one FTP client at a time.
 - Use `WaitSelect()` in a single event loop.
 - Receive commands terminated by CRLF.
 - Handle partial `send()` and `recv()` results.
 - Enforce command length limits.
+- Set accepted sockets to non-blocking mode.
+- Reject additional clients with FTP status `421`.
+- Support `QUIT` as the first control command and return `502` for commands
+  assigned to later phases.
+- Stop cleanly on Ctrl-C.
 
 ## 4. Session state
 
