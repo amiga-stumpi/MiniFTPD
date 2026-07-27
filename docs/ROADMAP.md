@@ -10,7 +10,7 @@ updated here in the same commit as its implementation.
 | 1 | Project foundation | Complete |
 | 2 | Configuration | Complete |
 | 3 | TCP control connection | Complete |
-| 4 | Session state | Planned |
+| 4 | Session state | Complete |
 | 5 | Authentication | Planned |
 | 6 | Passive data connections | Planned |
 | 7 | Basic FTP commands | Planned |
@@ -77,11 +77,17 @@ Status: **Complete**
 
 ## 4. Session state
 
+Status: **Complete**
+
 - Track connected, user-seen and authenticated states.
 - Track the current virtual FTP directory.
 - Support ASCII and binary transfer modes.
 - Own control, passive-listener and data sockets independently.
 - Apply an inactivity timeout.
+- Reset inactivity accounting whenever control data is received.
+- Close data, passive-listener and control sockets independently and safely.
+- Initialize each connection in binary mode with virtual directory `/`.
+- Accept `TYPE A` and `TYPE I` to update the transfer mode.
 
 ## 5. Authentication
 

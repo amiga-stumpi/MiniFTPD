@@ -22,6 +22,10 @@ Project steps 1 through 3 are complete:
 - one-client TCP control listener on the configured port
 - `WaitSelect()`-driven control connection handling
 - bounded CRLF command parsing and partial socket-write handling
+- explicit connection, login and transfer-mode session state
+- configurable control-connection inactivity timeout
+- independent cleanup for control, passive-listener and data sockets
+- `TYPE A` and `TYPE I` transfer-mode selection
 
 The current protocol skeleton accepts `QUIT`. Other commands receive a
 standards-compliant `502 Command not implemented` response until their
@@ -75,6 +79,10 @@ The control connection should behave as follows:
 220 MiniFTPD ready.
 NOOP
 502 Command not implemented.
+TYPE A
+200 Type set to A.
+TYPE I
+200 Type set to I.
 QUIT
 221 MiniFTPD closing connection.
 ```

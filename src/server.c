@@ -56,16 +56,25 @@ static void reset_session(struct MiniFtpdSession *session)
     session->control_fd = -1;
     session->passive_listen_fd = -1;
     session->data_fd = -1;
-    session->binary_mode = 1;
+    session->connection_state = MINIFTPD_SESSION_DISCONNECTED;
+    session->transfer_mode = MINIFTPD_TRANSFER_BINARY;
     session->cwd[0] = '/';
     session->cwd[1] = '\0';
 }
 
+static void close_session_socket(struct MiniFtpdServer *server, int *fd)
+{
+    if (*fd >= 0) {
+        miniftpd_close_socket(server->socket_base, *fd);
+        *fd = -1;
+    }
+}
+
 static void close_client(struct MiniFtpdServer *server)
 {
-    if (server->session.control_fd >= 0)
-        miniftpd_close_socket(server->socket_base,
-                              server->session.control_fd);
+    close_session_socket(server, &server->session.data_fd);
+    close_session_socket(server, &server->session.passive_listen_fd);
+    close_session_socket(server, &server->session.control_fd);
     reset_session(&server->session);
     server->command_overflow = 0;
     console_write("FTP control client disconnected.\n");
@@ -145,6 +154,15 @@ static int command_is(const char *line, const char *command)
            line[position] == '\t';
 }
 
+static const char *command_argument(const char *line)
+{
+    while (*line && *line != ' ' && *line != '\t')
+        ++line;
+    while (*line == ' ' || *line == '\t')
+        ++line;
+    return line;
+}
+
 static int process_command(struct MiniFtpdServer *server)
 {
     char *line;
@@ -165,6 +183,21 @@ static int process_command(struct MiniFtpdServer *server)
         send_reply(server, server->session.control_fd,
                    "221 MiniFTPD closing connection.\r\n");
         return 0;
+    }
+    if (command_is(line, "TYPE")) {
+        const char *argument = command_argument(line);
+        if ((argument[0] == 'A' || argument[0] == 'a') && !argument[1]) {
+            server->session.transfer_mode = MINIFTPD_TRANSFER_ASCII;
+            return send_reply(server, server->session.control_fd,
+                              "200 Type set to A.\r\n");
+        }
+        if ((argument[0] == 'I' || argument[0] == 'i') && !argument[1]) {
+            server->session.transfer_mode = MINIFTPD_TRANSFER_BINARY;
+            return send_reply(server, server->session.control_fd,
+                              "200 Type set to I.\r\n");
+        }
+        return send_reply(server, server->session.control_fd,
+                          "504 Unsupported TYPE.\r\n");
     }
     return send_reply(server, server->session.control_fd,
                       "502 Command not implemented.\r\n");
@@ -213,8 +246,10 @@ static int receive_control(struct MiniFtpdServer *server)
     received = miniftpd_recv(server->socket_base,
                              server->session.control_fd,
                              g_control_recv, sizeof(g_control_recv), 0);
-    if (received > 0)
+    if (received > 0) {
+        server->session.idle_seconds = 0;
         return consume_control_data(server, g_control_recv, received);
+    }
     if (received == 0)
         return 0;
     error = miniftpd_socket_errno(server->socket_base);
@@ -250,6 +285,8 @@ static void accept_client(struct MiniFtpdServer *server)
     }
     reset_session(&server->session);
     server->session.control_fd = fd;
+    server->session.connection_state = MINIFTPD_SESSION_CONNECTED;
+    server->session.idle_seconds = 0;
     server->command_overflow = 0;
     console_write("FTP control client connected.\n");
     if (!send_reply(server, fd, "220 MiniFTPD ready.\r\n"))
@@ -323,8 +360,15 @@ int miniftpd_server_run(struct Library *socket_base,
                 highest_fd = server.session.control_fd;
         }
         signals = SIGBREAKF_CTRL_C;
-        ready = miniftpd_wait_select(socket_base, highest_fd + 1,
-                                     &g_readfds, 0, 0, 0, &signals);
+        if (server.session.connection_state == MINIFTPD_SESSION_CONNECTED) {
+            g_timeout.tv_sec = 1;
+            g_timeout.tv_usec = 0;
+            ready = miniftpd_wait_select(socket_base, highest_fd + 1,
+                                         &g_readfds, 0, 0, &g_timeout, &signals);
+        } else {
+            ready = miniftpd_wait_select(socket_base, highest_fd + 1,
+                                         &g_readfds, 0, 0, 0, &signals);
+        }
         if (signals & SIGBREAKF_CTRL_C) {
             running = 0;
             continue;
@@ -333,6 +377,17 @@ int miniftpd_server_run(struct Library *socket_base,
             console_number("WaitSelect() failed, errno=",
                            miniftpd_socket_errno(socket_base));
             break;
+        }
+        if (ready == 0 &&
+            server.session.connection_state == MINIFTPD_SESSION_CONNECTED) {
+            if (server.session.idle_seconds < 65535)
+                ++server.session.idle_seconds;
+            if (server.session.idle_seconds >= config->timeout_seconds) {
+                send_reply(&server, server.session.control_fd,
+                           "421 Control connection timed out.\r\n");
+                close_client(&server);
+            }
+            continue;
         }
         if (MINIFTPD_FD_ISSET(server.listen_fd, &g_readfds))
             accept_client(&server);
