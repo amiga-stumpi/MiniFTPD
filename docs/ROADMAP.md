@@ -8,7 +8,7 @@ updated here in the same commit as its implementation.
 | Step | Area | Status |
 |---:|---|---|
 | 1 | Project foundation | Complete |
-| 2 | Configuration | Planned |
+| 2 | Configuration | Complete |
 | 3 | TCP control connection | Planned |
 | 4 | Session state | Planned |
 | 5 | Authentication | Planned |
@@ -39,6 +39,8 @@ Status: **Complete**
 
 ## 2. Configuration
 
+Status: **Complete**
+
 - Load `miniftpd.conf` from the program directory.
 - Create a default file when no configuration exists.
 - Parse and validate:
@@ -51,6 +53,11 @@ Status: **Complete**
   - logging switch
 - Reject invalid port ranges and unsafe empty roots.
 - Never print or log passwords.
+- The parser is strict: unknown keys and malformed values stop startup.
+- Accepted ranges are control port 1-65535, passive ports 1024-65535,
+  and timeout 10-3600 seconds.
+- The parser uses a static 2048-byte file buffer to protect the small
+  process stack.
 
 ## 3. TCP control connection
 

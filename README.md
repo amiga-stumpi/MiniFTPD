@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project step 1 is complete:
+Project steps 1 and 2 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -16,6 +16,9 @@ Project step 1 is complete:
 - initial configuration file named `miniftpd.conf`
 - configuration and session data structures
 - complete implementation roadmap
+- strict `miniftpd.conf` loading and validation
+- automatic default configuration creation
+- effective configuration summary without password disclosure
 
 No FTP port is opened in this development build yet.
 
@@ -48,8 +51,10 @@ The configuration filename is always:
 miniftpd.conf
 ```
 
-Configuration loading and validation will be implemented in project step 2.
-The file already documents the intended initial options.
+Configuration loading and validation are implemented. If the file is missing,
+MiniFTPD creates it beside the executable using safe defaults. Unknown keys,
+malformed values, reversed passive-port ranges and oversized files stop startup
+with an error. The configured password is never printed.
 
 ## Documentation
 

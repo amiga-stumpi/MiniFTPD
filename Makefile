@@ -6,7 +6,7 @@ CPPFLAGS = -Iinclude -I$(NETINC)
 CFLAGS = -O2 -Wall -Wextra -mcrt=nix13
 
 TARGET = build/MiniFTPD
-OBJS = src/main.o
+OBJS = src/main.o src/config.o
 
 all: $(TARGET)
 
