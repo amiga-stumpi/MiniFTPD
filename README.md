@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project steps 1 through 8 are complete:
+Project steps 1 through 9 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -39,6 +39,8 @@ Project steps 1 through 8 are complete:
 - DOS-lock ancestry checks preventing traversal and link escapes
 - startup validation of the configured root directory
 - centralized enforcement of the `readonly` setting
+- passive `LIST` for current or explicitly selected contained directories
+- streamed Unix-style directory rows with file type and size
 
 Authenticated sessions accept the implemented discovery, authentication,
 directory, transfer-mode, passive-mode and shutdown commands. File listing,
@@ -138,6 +140,11 @@ The final two values encode the selected port (`195 * 256 + 80 = 50000`).
 Connect to that address and port from a second shell. MiniFTPD then reports
 `FTP passive data client connected.` on its console. The exact address and port
 depend on the Amiga configuration and available passive ports.
+
+After opening the passive data connection, `LIST`, `LIST -la` and `LIST test`
+stream directory rows to that connection. A successful transfer returns `150`
+before the listing and `226` after the data socket has closed. Standard FTP
+clients can perform this sequence with their normal `ls` command.
 
 ## Documentation
 

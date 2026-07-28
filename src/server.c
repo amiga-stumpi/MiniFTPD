@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "miniftpd/config.h"
+#include "miniftpd/listing.h"
 #include "miniftpd/path.h"
 #include "miniftpd/server.h"
 #include "miniftpd/session.h"
@@ -14,6 +15,7 @@
 
 #define CONTROL_RECV_SIZE 256
 #define SEND_TIMEOUT_SECONDS 5
+#define DATA_CONNECT_TIMEOUT_SECONDS 10
 
 struct MiniFtpdServer
 {
@@ -32,6 +34,8 @@ static char g_normalized_path[MINIFTPD_CWD_SIZE];
 static struct MiniFtpdFdSet g_readfds;
 static struct MiniFtpdFdSet g_writefds;
 static struct MiniFtpdTimeVal g_timeout;
+
+static void accept_data_client(struct MiniFtpdServer *server);
 
 static void console_write(const char *text)
 {
@@ -197,6 +201,99 @@ static const char *command_argument(const char *line)
     while (*line == ' ' || *line == '\t')
         ++line;
     return line;
+}
+
+static const char *list_path_argument(const char *line)
+{
+    const char *argument;
+
+    argument = command_argument(line);
+    while (argument[0] == '-') {
+        while (*argument && *argument != ' ' && *argument != '\t')
+            ++argument;
+        while (*argument == ' ' || *argument == '\t')
+            ++argument;
+    }
+    return argument;
+}
+
+static int wait_for_data_connection(struct MiniFtpdServer *server)
+{
+    ULONG signals;
+    int ready;
+
+    if (server->session.data_fd >= 0)
+        return 1;
+    if (server->session.passive_listen_fd < 0)
+        return 0;
+    MINIFTPD_FD_ZERO(&g_readfds);
+    MINIFTPD_FD_SET(server->session.passive_listen_fd, &g_readfds);
+    g_timeout.tv_sec = DATA_CONNECT_TIMEOUT_SECONDS;
+    g_timeout.tv_usec = 0;
+    signals = SIGBREAKF_CTRL_C;
+    ready = miniftpd_wait_select(server->socket_base,
+                                 server->session.passive_listen_fd + 1,
+                                 &g_readfds, 0, 0, &g_timeout, &signals);
+    if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
+        server->stop_requested = 1;
+        return 0;
+    }
+    if (ready <= 0 ||
+        !MINIFTPD_FD_ISSET(server->session.passive_listen_fd, &g_readfds))
+        return 0;
+    accept_data_client(server);
+    return server->session.data_fd >= 0;
+}
+
+static int listing_write(void *context, const char *data, int length)
+{
+    struct MiniFtpdServer *server = (struct MiniFtpdServer *)context;
+
+    return send_all(server, server->session.data_fd, data, length);
+}
+
+static int send_directory_listing(struct MiniFtpdServer *server,
+                                  const char *line)
+{
+    const char *argument;
+    int result;
+
+    argument = list_path_argument(line);
+    if (argument[0]) {
+        if (!miniftpd_path_normalize(server->session.cwd, argument,
+                                     g_normalized_path,
+                                     sizeof(g_normalized_path)))
+            return send_reply(server, server->session.control_fd,
+                              "550 Directory unavailable.\r\n");
+    } else {
+        strcpy(g_normalized_path, server->session.cwd);
+    }
+    if (!miniftpd_path_directory_exists(server->config->root,
+                                        g_normalized_path))
+        return send_reply(server, server->session.control_fd,
+                          "550 Directory unavailable.\r\n");
+    if (!wait_for_data_connection(server)) {
+        close_session_socket(server, &server->session.data_fd);
+        close_session_socket(server, &server->session.passive_listen_fd);
+        return send_reply(server, server->session.control_fd,
+                          "425 Use PASV first.\r\n");
+    }
+    if (!send_reply(server, server->session.control_fd,
+                    "150 Opening ASCII mode data connection for file list.\r\n"))
+        return 0;
+    result = miniftpd_list_directory(server->config->root,
+                                     g_normalized_path,
+                                     listing_write, server);
+    close_session_socket(server, &server->session.data_fd);
+    close_session_socket(server, &server->session.passive_listen_fd);
+    if (result > 0)
+        return send_reply(server, server->session.control_fd,
+                          "226 Directory send OK.\r\n");
+    if (result < 0)
+        return send_reply(server, server->session.control_fd,
+                          "426 Data connection error.\r\n");
+    return send_reply(server, server->session.control_fd,
+                      "451 Could not read directory.\r\n");
 }
 
 static int open_passive_listener(struct MiniFtpdServer *server)
@@ -376,6 +473,8 @@ static int process_command(struct MiniFtpdServer *server)
         !miniftpd_path_writes_allowed(server->config))
         return send_reply(server, server->session.control_fd,
                           "550 Server is read-only.\r\n");
+    if (command_is(line, "LIST"))
+        return send_directory_listing(server, line);
     if (command_is(line, "PASV"))
         return open_passive_listener(server);
     if (command_is(line, "TYPE")) {

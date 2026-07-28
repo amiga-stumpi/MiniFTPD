@@ -15,7 +15,7 @@ updated here in the same commit as its implementation.
 | 6 | Passive data connections | Complete |
 | 7 | Basic FTP commands | Complete |
 | 8 | Filesystem containment | Complete |
-| 9 | Directory listings | Planned |
+| 9 | Directory listings | Complete |
 | 10 | Downloads | Planned |
 | 11 | Uploads | Planned |
 | 12 | Additional file commands | Planned |
@@ -151,10 +151,19 @@ Status: **Complete**
 
 ## 9. Directory listings
 
-- Generate broadly compatible `LIST` output.
-- Distinguish files and directories.
-- Report file sizes.
-- Stream entries without building a complete listing on the stack.
+Status: **Complete**
+
+- Implement authenticated `LIST` over a passive data connection.
+- Support the current directory, a validated path argument and common ignored
+  option forms such as `LIST -la`.
+- Generate broadly compatible Unix-style listing rows.
+- Distinguish files and directories and report file sizes.
+- Stream each entry directly instead of building a complete listing in memory.
+- Keep listing path, filename, line and `FileInfoBlock` buffers off the stack.
+- Sanitize control characters in existing filesystem names.
+- Wait up to ten seconds for a pending passive data connection.
+- Close data and passive sockets after success, failure or timeout.
+- Return `150`, `226`, `425`, `426`, `451` and `550` as appropriate.
 - Add `NLST` and `MLSD` later if client compatibility requires them.
 
 ## 10. Downloads
