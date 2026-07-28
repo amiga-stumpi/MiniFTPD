@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project steps 1 through 5 are complete:
+Project steps 1 through 6 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -30,8 +30,11 @@ Project steps 1 through 5 are complete:
 - configured `USER`/`PASS` authentication
 - optional anonymous login as `anonymous` or `ftp`
 - pre-authentication command restrictions and failed-login limiting
+- authenticated `PASV` with rotating configured passive ports
+- valid `227` replies using the control connection local IPv4 address
+- asynchronous acceptance of one temporary passive data connection
 
-Authenticated sessions accept `TYPE` and `QUIT`. Other commands receive a
+Authenticated sessions accept `TYPE`, `PASV` and `QUIT`. Other commands receive a
 standards-compliant `502 Command not implemented` response until their
 respective roadmap phases are implemented.
 
@@ -97,6 +100,18 @@ QUIT
 
 Only one client is accepted at a time. A second connection receives
 `421 MiniFTPD is busy`.
+
+After login, test the passive listener:
+
+```text
+PASV
+227 Entering Passive Mode (192,168,7,25,195,80).
+```
+
+The final two values encode the selected port (`195 * 256 + 80 = 50000`).
+Connect to that address and port from a second shell. MiniFTPD then reports
+`FTP passive data client connected.` on its console. The exact address and port
+depend on the Amiga configuration and available passive ports.
 
 ## Documentation
 

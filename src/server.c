@@ -22,6 +22,7 @@ struct MiniFtpdServer
     struct MiniFtpdSession session;
     UBYTE command_overflow;
     UBYTE stop_requested;
+    UWORD next_pasv_port;
 };
 
 static UBYTE g_control_recv[CONTROL_RECV_SIZE];
@@ -80,6 +81,15 @@ static void close_session_socket(struct MiniFtpdServer *server, int *fd)
         miniftpd_close_socket(server->socket_base, *fd);
         *fd = -1;
     }
+}
+
+static int set_nonblocking(struct MiniFtpdServer *server, int fd)
+{
+    ULONG enabled;
+
+    enabled = 1;
+    return miniftpd_ioctl(server->socket_base, fd, MINIFTPD_FIONBIO,
+                          &enabled) >= 0;
 }
 
 static void close_client(struct MiniFtpdServer *server)
@@ -186,6 +196,67 @@ static const char *command_argument(const char *line)
     return line;
 }
 
+static int open_passive_listener(struct MiniFtpdServer *server)
+{
+    struct MiniFtpdSockAddrIn local_address;
+    struct MiniFtpdSockAddrIn passive_address;
+    ULONG ip;
+    UWORD port;
+    ULONG attempts;
+    ULONG range;
+    int address_length;
+    int fd;
+    char reply[96];
+
+    close_session_socket(server, &server->session.data_fd);
+    close_session_socket(server, &server->session.passive_listen_fd);
+    address_length = sizeof(local_address);
+    if (miniftpd_getsockname(server->socket_base, server->session.control_fd,
+                             (struct MiniFtpdSockAddr *)&local_address,
+                             &address_length) < 0)
+        return send_reply(server, server->session.control_fd,
+                          "425 Cannot determine local address.\r\n");
+    ip = local_address.sin_addr.s_addr;
+    if (!ip)
+        return send_reply(server, server->session.control_fd,
+                          "425 Invalid local address.\r\n");
+    range = (ULONG)server->config->pasv_port_max -
+            (ULONG)server->config->pasv_port_min + 1UL;
+    for (attempts = 0; attempts < range; ++attempts) {
+        port = server->next_pasv_port;
+        ++server->next_pasv_port;
+        if (server->next_pasv_port > server->config->pasv_port_max)
+            server->next_pasv_port = server->config->pasv_port_min;
+        fd = miniftpd_socket(server->socket_base, MINIFTPD_AF_INET,
+                             MINIFTPD_SOCK_STREAM, MINIFTPD_IPPROTO_TCP);
+        if (fd < 0)
+            break;
+        memset(&passive_address, 0, sizeof(passive_address));
+        passive_address.sin_len = sizeof(passive_address);
+        passive_address.sin_family = MINIFTPD_AF_INET;
+        passive_address.sin_port = port;
+        passive_address.sin_addr.s_addr = ip;
+        if (miniftpd_bind(server->socket_base, fd,
+                          (const struct MiniFtpdSockAddr *)&passive_address,
+                          sizeof(passive_address)) >= 0 &&
+            miniftpd_listen(server->socket_base, fd, 1) >= 0 &&
+            set_nonblocking(server, fd)) {
+            server->session.passive_listen_fd = fd;
+            sprintf(reply,
+                    "227 Entering Passive Mode (%lu,%lu,%lu,%lu,%u,%u).\r\n",
+                    (unsigned long)((ip >> 24) & 255UL),
+                    (unsigned long)((ip >> 16) & 255UL),
+                    (unsigned long)((ip >> 8) & 255UL),
+                    (unsigned long)(ip & 255UL),
+                    (unsigned)(port >> 8), (unsigned)(port & 255));
+            return send_reply(server, server->session.control_fd, reply);
+        }
+        miniftpd_close_socket(server->socket_base, fd);
+    }
+    return send_reply(server, server->session.control_fd,
+                      "425 No passive ports available.\r\n");
+}
+
 static int process_command(struct MiniFtpdServer *server)
 {
     char *line;
@@ -255,6 +326,8 @@ static int process_command(struct MiniFtpdServer *server)
     if (server->session.login_state != MINIFTPD_LOGIN_AUTHENTICATED)
         return send_reply(server, server->session.control_fd,
                           "530 Please login with USER and PASS.\r\n");
+    if (command_is(line, "PASV"))
+        return open_passive_listener(server);
     if (command_is(line, "TYPE")) {
         const char *argument = command_argument(line);
         if ((argument[0] == 'A' || argument[0] == 'a') && !argument[1]) {
@@ -327,12 +400,33 @@ static int receive_control(struct MiniFtpdServer *server)
     return socket_would_block(error);
 }
 
+static void accept_data_client(struct MiniFtpdServer *server)
+{
+    struct MiniFtpdSockAddr peer_address;
+    int peer_length;
+    int fd;
+
+    peer_length = sizeof(peer_address);
+    fd = miniftpd_accept(server->socket_base,
+                         server->session.passive_listen_fd,
+                         &peer_address, &peer_length);
+    if (fd < 0)
+        return;
+    if (!set_nonblocking(server, fd)) {
+        miniftpd_close_socket(server->socket_base, fd);
+        return;
+    }
+    close_session_socket(server, &server->session.data_fd);
+    server->session.data_fd = fd;
+    close_session_socket(server, &server->session.passive_listen_fd);
+    console_write("FTP passive data client connected.\n");
+}
+
 static void accept_client(struct MiniFtpdServer *server)
 {
     struct MiniFtpdSockAddr peer_address;
     int peer_length;
     int fd;
-    ULONG nonblocking;
 
     peer_length = sizeof(peer_address);
     fd = miniftpd_accept(server->socket_base, server->listen_fd,
@@ -342,9 +436,7 @@ static void accept_client(struct MiniFtpdServer *server)
                        miniftpd_socket_errno(server->socket_base));
         return;
     }
-    nonblocking = 1;
-    if (miniftpd_ioctl(server->socket_base, fd, MINIFTPD_FIONBIO,
-                       &nonblocking) < 0) {
+    if (!set_nonblocking(server, fd)) {
         miniftpd_close_socket(server->socket_base, fd);
         console_write("Could not set accepted socket non-blocking.\n");
         return;
@@ -411,6 +503,7 @@ int miniftpd_server_run(struct Library *socket_base,
     server.socket_base = socket_base;
     server.config = config;
     server.listen_fd = -1;
+    server.next_pasv_port = config->pasv_port_min;
     reset_session(&server.session);
     if (!open_listener(&server)) {
         if (server.listen_fd >= 0)
@@ -431,6 +524,11 @@ int miniftpd_server_run(struct Library *socket_base,
             MINIFTPD_FD_SET(server.session.control_fd, &g_readfds);
             if (server.session.control_fd > highest_fd)
                 highest_fd = server.session.control_fd;
+        }
+        if (server.session.passive_listen_fd >= 0) {
+            MINIFTPD_FD_SET(server.session.passive_listen_fd, &g_readfds);
+            if (server.session.passive_listen_fd > highest_fd)
+                highest_fd = server.session.passive_listen_fd;
         }
         signals = SIGBREAKF_CTRL_C;
         g_timeout.tv_sec = 1;
@@ -463,6 +561,9 @@ int miniftpd_server_run(struct Library *socket_base,
             running = 0;
             continue;
         }
+        if (server.session.passive_listen_fd >= 0 &&
+            MINIFTPD_FD_ISSET(server.session.passive_listen_fd, &g_readfds))
+            accept_data_client(&server);
         if (server.session.control_fd >= 0 &&
             MINIFTPD_FD_ISSET(server.session.control_fd, &g_readfds) &&
             !receive_control(&server))

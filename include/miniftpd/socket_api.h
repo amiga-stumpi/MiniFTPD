@@ -61,6 +61,8 @@ int miniftpd_send(struct Library *base, int fd,
                   const void *buffer, int length, int flags);
 int miniftpd_recv(struct Library *base, int fd,
                   void *buffer, int length, int flags);
+int miniftpd_getsockname(struct Library *base, int fd,
+                          struct MiniFtpdSockAddr *addr, int *addrlen);
 int miniftpd_ioctl(struct Library *base, int fd, ULONG request, void *argument);
 int miniftpd_close_socket(struct Library *base, int fd);
 int miniftpd_wait_select(struct Library *base, int nfds,

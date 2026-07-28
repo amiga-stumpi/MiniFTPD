@@ -12,7 +12,7 @@ updated here in the same commit as its implementation.
 | 3 | TCP control connection | Complete |
 | 4 | Session state | Complete |
 | 5 | Authentication | Complete |
-| 6 | Passive data connections | Planned |
+| 6 | Passive data connections | Complete |
 | 7 | Basic FTP commands | Planned |
 | 8 | Filesystem containment | Planned |
 | 9 | Directory listings | Planned |
@@ -106,11 +106,16 @@ Status: **Complete**
 
 ## 6. Passive data connections
 
-- Implement `PASV`.
-- Select an available port from the configured range.
+Status: **Complete**
+
+- Implement `PASV` after successful authentication.
+- Rotate through the configured passive port range and skip occupied ports.
+- Derive the advertised IPv4 address from the control connection with
+  `getsockname()`.
 - Return a valid `227 Entering Passive Mode` response.
-- Accept one temporary data connection.
-- Close passive resources after success, failure or timeout.
+- Accept one temporary non-blocking data connection in the main event loop.
+- Replace stale passive or data sockets when a new `PASV` command arrives.
+- Close passive resources after control loss, failure, timeout or shutdown.
 
 ## 7. Basic FTP commands
 

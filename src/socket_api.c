@@ -73,6 +73,18 @@ int miniftpd_recv(struct Library *base, int fd,
     return d0;
 }
 
+int miniftpd_getsockname(struct Library *base, int fd,
+                          struct MiniFtpdSockAddr *addr, int *addrlen)
+{
+    register int d0 __asm("d0") = fd;
+    register struct MiniFtpdSockAddr *a0 __asm("a0") = addr;
+    register int *a1 __asm("a1") = addrlen;
+    register struct Library *a6 __asm("a6") = base;
+    __asm volatile ("jsr a6@(-102:W)" : "+r"(d0), "+r"(a0), "+r"(a1)
+                    : "r"(a6) : "d1", "cc", "memory");
+    return d0;
+}
+
 int miniftpd_ioctl(struct Library *base, int fd, ULONG request, void *argument)
 {
     register int d0 __asm("d0") = fd;
