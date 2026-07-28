@@ -194,11 +194,15 @@ Status: **Complete**
 
 ## 12. Additional file commands
 
-- `SIZE`
-- `DELE`
-- `MKD`, `RMD`
-- `RNFR`, `RNTO`
-- `REST` and resumed transfers
+Status: **Complete**
+
+- [x] `SIZE` with exact byte counts.
+- [x] `DELE` for contained files.
+- [x] `MKD` and empty-directory `RMD`.
+- [x] Stateful `RNFR` and `RNTO` for contained files and directories.
+- [x] One-shot `REST` offsets and resumed `RETR` and `STOR` transfers.
+- [x] Central read-only enforcement for all mutating commands.
+- [x] Advertise `SIZE` and `REST STREAM` through `FEAT`.
 
 ## 13. Error handling and cleanup
 

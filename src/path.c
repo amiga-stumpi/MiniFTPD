@@ -7,6 +7,8 @@
 #include "miniftpd/path.h"
 
 static char g_dos_path[MINIFTPD_PATH_SIZE * 2];
+static char g_rename_source_path[MINIFTPD_PATH_SIZE * 2];
+static char g_rename_target_path[MINIFTPD_PATH_SIZE * 2];
 static struct FileInfoBlock g_path_fib;
 
 static int append_component(char *output, int output_size,
@@ -256,6 +258,90 @@ int miniftpd_path_directory_exists(const char *root,
     UnLock(target_lock);
     UnLock(root_lock);
     return valid;
+}
+
+static int path_entry_exists(const char *root, const char *virtual_path,
+                             char *dos_path, int dos_path_size)
+{
+    BPTR root_lock;
+    BPTR target_lock;
+    int valid;
+
+    if (!root || !virtual_path || !virtual_path[1] ||
+        !miniftpd_path_build_dos(root, virtual_path,
+                                 dos_path, dos_path_size))
+        return 0;
+    root_lock = Lock((STRPTR)root, SHARED_LOCK);
+    if (!root_lock)
+        return 0;
+    target_lock = Lock((STRPTR)dos_path, SHARED_LOCK);
+    if (!target_lock) {
+        UnLock(root_lock);
+        return 0;
+    }
+    valid = lock_is_beneath(root_lock, target_lock);
+    UnLock(target_lock);
+    UnLock(root_lock);
+    return valid;
+}
+
+int miniftpd_path_delete_file(const char *root, const char *virtual_path)
+{
+    LONG size;
+
+    if (!miniftpd_path_resolve_file(root, virtual_path,
+                                    g_dos_path, sizeof(g_dos_path), &size))
+        return 0;
+    return DeleteFile((STRPTR)g_dos_path) != 0;
+}
+
+int miniftpd_path_make_directory(const char *root, const char *virtual_path)
+{
+    BPTR existing;
+    BPTR created;
+
+    if (!miniftpd_path_resolve_upload(root, virtual_path,
+                                      g_dos_path, sizeof(g_dos_path)))
+        return 0;
+    existing = Lock((STRPTR)g_dos_path, SHARED_LOCK);
+    if (existing) {
+        UnLock(existing);
+        return 0;
+    }
+    created = CreateDir((STRPTR)g_dos_path);
+    if (!created)
+        return 0;
+    UnLock(created);
+    return 1;
+}
+
+int miniftpd_path_remove_directory(const char *root,
+                                   const char *virtual_path)
+{
+    if (!virtual_path || !virtual_path[1] ||
+        !miniftpd_path_directory_exists(root, virtual_path) ||
+        !miniftpd_path_build_dos(root, virtual_path,
+                                 g_dos_path, sizeof(g_dos_path)))
+        return 0;
+    return DeleteFile((STRPTR)g_dos_path) != 0;
+}
+
+int miniftpd_path_rename(const char *root, const char *source_virtual,
+                         const char *target_virtual)
+{
+    BPTR existing;
+
+    if (!path_entry_exists(root, source_virtual,
+                           g_rename_source_path, sizeof(g_rename_source_path)) ||
+        !miniftpd_path_resolve_upload(root, target_virtual,
+                                      g_rename_target_path, sizeof(g_rename_target_path)))
+        return 0;
+    existing = Lock((STRPTR)g_rename_target_path, SHARED_LOCK);
+    if (existing) {
+        UnLock(existing);
+        return 0;
+    }
+    return Rename((STRPTR)g_rename_source_path, (STRPTR)g_rename_target_path) != 0;
 }
 
 int miniftpd_path_writes_allowed(const struct MiniFtpdConfig *config)

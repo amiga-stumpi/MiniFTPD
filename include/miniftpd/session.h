@@ -37,7 +37,11 @@ struct MiniFtpdSession
     UBYTE user_valid;
     UBYTE anonymous_login;
     UBYTE failed_logins;
+    UBYTE rename_pending;
+    UBYTE restart_pending;
+    LONG restart_offset;
     char cwd[MINIFTPD_CWD_SIZE];
+    char rename_from[MINIFTPD_CWD_SIZE];
     char command[MINIFTPD_COMMAND_SIZE];
     UWORD command_len;
 };

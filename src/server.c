@@ -204,6 +204,34 @@ static int command_is(const char *line, const char *command)
            line[position] == '\t';
 }
 
+static int parse_nonnegative_long(const char *text, LONG *value)
+{
+    ULONG result;
+    ULONG digit;
+
+    if (!text || !text[0] || !value)
+        return 0;
+    result = 0;
+    while (*text) {
+        if (*text < '0' || *text > '9')
+            return 0;
+        digit = (ULONG)(*text - '0');
+        if (result > (0x7fffffffUL - digit) / 10UL)
+            return 0;
+        result = result * 10UL + digit;
+        ++text;
+    }
+    *value = (LONG)result;
+    return 1;
+}
+
+static int command_changes_files(const char *line)
+{
+    return command_is(line, "STOR") || command_is(line, "DELE") ||
+           command_is(line, "MKD") || command_is(line, "RMD") ||
+           command_is(line, "RNFR") || command_is(line, "RNTO");
+}
+
 static const char *command_argument(const char *line)
 {
     while (*line && *line != ' ' && *line != '\t')
@@ -315,9 +343,13 @@ static int receive_file(struct MiniFtpdServer *server, const char *line)
 {
     const char *argument;
     LONG file_size;
+    LONG restart_offset;
     int result;
 
     argument = command_argument(line);
+    restart_offset = server->session.restart_pending ?
+                     server->session.restart_offset : 0;
+    server->session.restart_pending = 0;
     if (!argument[0] ||
         !miniftpd_path_normalize(server->session.cwd, argument,
                                  g_normalized_path,
@@ -339,7 +371,7 @@ static int receive_file(struct MiniFtpdServer *server, const char *line)
         return 0;
     result = miniftpd_store_file(server->config->root,
                                  g_normalized_path,
-                                 store_read, server, &file_size);
+                                 store_read, server, restart_offset, &file_size);
     close_session_socket(server, &server->session.data_fd);
     close_session_socket(server, &server->session.passive_listen_fd);
     if (result == MINIFTPD_STOR_OK) {
@@ -365,9 +397,13 @@ static int send_file(struct MiniFtpdServer *server, const char *line)
 {
     const char *argument;
     LONG file_size;
+    LONG restart_offset;
     int result;
 
     argument = command_argument(line);
+    restart_offset = server->session.restart_pending ?
+                     server->session.restart_offset : 0;
+    server->session.restart_pending = 0;
     if (!argument[0] ||
         !miniftpd_path_normalize(server->session.cwd, argument,
                                  g_normalized_path,
@@ -376,7 +412,8 @@ static int send_file(struct MiniFtpdServer *server, const char *line)
                                     g_normalized_path,
                                     g_resolved_path,
                                     sizeof(g_resolved_path),
-                                    &file_size))
+                                    &file_size) ||
+        restart_offset > file_size)
         return send_reply(server, server->session.control_fd,
                           "550 File unavailable.\r\n");
     if (!wait_for_data_connection(server)) {
@@ -385,6 +422,7 @@ static int send_file(struct MiniFtpdServer *server, const char *line)
         return send_reply(server, server->session.control_fd,
                           "425 Use PASV first.\r\n");
     }
+    file_size -= restart_offset;
     sprintf(g_path_reply,
             "150 Opening data connection for file transfer (%ld bytes).\r\n",
             (long)file_size);
@@ -392,7 +430,7 @@ static int send_file(struct MiniFtpdServer *server, const char *line)
         return 0;
     result = miniftpd_retrieve_file(server->config->root,
                                     g_normalized_path,
-                                    retrieve_write, server, 0);
+                                    retrieve_write, server, restart_offset, 0);
     close_session_socket(server, &server->session.data_fd);
     close_session_socket(server, &server->session.passive_listen_fd);
     if (result == MINIFTPD_RETR_OK)
@@ -450,6 +488,121 @@ static int send_directory_listing(struct MiniFtpdServer *server,
                           "426 Data connection error.\r\n");
     return send_reply(server, server->session.control_fd,
                       "451 Could not read directory.\r\n");
+}
+
+static int normalize_command_path(struct MiniFtpdServer *server,
+                                  const char *line)
+{
+    const char *argument = command_argument(line);
+
+    return argument[0] &&
+           miniftpd_path_normalize(server->session.cwd, argument,
+                                   g_normalized_path,
+                                   sizeof(g_normalized_path));
+}
+
+static int command_size(struct MiniFtpdServer *server, const char *line)
+{
+    LONG file_size;
+
+    if (!normalize_command_path(server, line) ||
+        !miniftpd_path_resolve_file(server->config->root,
+                                    g_normalized_path, g_resolved_path,
+                                    sizeof(g_resolved_path), &file_size))
+        return send_reply(server, server->session.control_fd,
+                          "550 File unavailable.\r\n");
+    sprintf(g_path_reply, "213 %ld\r\n", (long)file_size);
+    return send_reply(server, server->session.control_fd, g_path_reply);
+}
+
+static int command_delete(struct MiniFtpdServer *server, const char *line)
+{
+    if (!normalize_command_path(server, line) ||
+        !miniftpd_path_delete_file(server->config->root, g_normalized_path))
+        return send_reply(server, server->session.control_fd,
+                          "550 File unavailable.\r\n");
+    return send_reply(server, server->session.control_fd,
+                      "250 File deleted.\r\n");
+}
+
+static int command_make_directory(struct MiniFtpdServer *server,
+                                  const char *line)
+{
+    if (!normalize_command_path(server, line) ||
+        !miniftpd_path_make_directory(server->config->root,
+                                      g_normalized_path))
+        return send_reply(server, server->session.control_fd,
+                          "550 Directory unavailable.\r\n");
+    sprintf(g_path_reply, "257 \"%s\" directory created.\r\n",
+            g_normalized_path);
+    return send_reply(server, server->session.control_fd, g_path_reply);
+}
+
+static int command_remove_directory(struct MiniFtpdServer *server,
+                                    const char *line)
+{
+    if (!normalize_command_path(server, line) ||
+        !strcmp(g_normalized_path, server->session.cwd) ||
+        !miniftpd_path_remove_directory(server->config->root,
+                                        g_normalized_path))
+        return send_reply(server, server->session.control_fd,
+                          "550 Directory unavailable or not empty.\r\n");
+    return send_reply(server, server->session.control_fd,
+                      "250 Directory removed.\r\n");
+}
+
+static int command_rename_from(struct MiniFtpdServer *server,
+                               const char *line)
+{
+    LONG file_size;
+
+    server->session.rename_pending = 0;
+    if (!normalize_command_path(server, line) ||
+        (!miniftpd_path_resolve_file(server->config->root,
+                                     g_normalized_path, g_resolved_path,
+                                     sizeof(g_resolved_path), &file_size) &&
+         !miniftpd_path_directory_exists(server->config->root,
+                                         g_normalized_path)))
+        return send_reply(server, server->session.control_fd,
+                          "550 File or directory unavailable.\r\n");
+    strcpy(server->session.rename_from, g_normalized_path);
+    server->session.rename_pending = 1;
+    return send_reply(server, server->session.control_fd,
+                      "350 RNFR accepted; send RNTO.\r\n");
+}
+
+static int command_rename_to(struct MiniFtpdServer *server,
+                             const char *line)
+{
+    int renamed;
+
+    if (!server->session.rename_pending)
+        return send_reply(server, server->session.control_fd,
+                          "503 Send RNFR first.\r\n");
+    server->session.rename_pending = 0;
+    renamed = normalize_command_path(server, line) &&
+              miniftpd_path_rename(server->config->root,
+                                   server->session.rename_from,
+                                   g_normalized_path);
+    if (!renamed)
+        return send_reply(server, server->session.control_fd,
+                          "550 Rename failed.\r\n");
+    return send_reply(server, server->session.control_fd,
+                      "250 Rename successful.\r\n");
+}
+
+static int command_restart(struct MiniFtpdServer *server, const char *line)
+{
+    LONG offset;
+
+    if (!parse_nonnegative_long(command_argument(line), &offset))
+        return send_reply(server, server->session.control_fd,
+                          "501 Invalid restart position.\r\n");
+    server->session.restart_offset = offset;
+    server->session.restart_pending = 1;
+    sprintf(g_path_reply, "350 Restarting at %ld. Send RETR or STOR.\r\n",
+            (long)offset);
+    return send_reply(server, server->session.control_fd, g_path_reply);
 }
 
 static int open_passive_listener(struct MiniFtpdServer *server)
@@ -539,7 +692,7 @@ static int process_command(struct MiniFtpdServer *server)
                           "215 AMIGA Type: L8.\r\n");
     if (command_is(line, "FEAT"))
         return send_reply(server, server->session.control_fd,
-                          "211 No additional features.\r\n");
+                          "211-Features\r\n SIZE\r\n REST STREAM\r\n211 End\r\n");
     if (command_is(line, "NOOP"))
         return send_reply(server, server->session.control_fd,
                           "200 NOOP command successful.\r\n");
@@ -591,6 +744,13 @@ static int process_command(struct MiniFtpdServer *server)
     if (server->session.login_state != MINIFTPD_LOGIN_AUTHENTICATED)
         return send_reply(server, server->session.control_fd,
                           "530 Please login with USER and PASS.\r\n");
+    if (server->session.rename_pending &&
+        !command_is(line, "RNTO") && !command_is(line, "RNFR"))
+        server->session.rename_pending = 0;
+    if (command_changes_files(line) &&
+        !miniftpd_path_writes_allowed(server->config))
+        return send_reply(server, server->session.control_fd,
+                          "550 Server is read-only.\r\n");
     if (command_is(line, "PWD")) {
         sprintf(g_path_reply, "257 \"%s\" is the current directory.\r\n",
                 server->session.cwd);
@@ -625,10 +785,20 @@ static int process_command(struct MiniFtpdServer *server)
         return send_reply(server, server->session.control_fd,
                           "550 Directory unavailable.\r\n");
     }
-    if (command_is(line, "STOR") &&
-        !miniftpd_path_writes_allowed(server->config))
-        return send_reply(server, server->session.control_fd,
-                          "550 Server is read-only.\r\n");
+    if (command_is(line, "SIZE"))
+        return command_size(server, line);
+    if (command_is(line, "DELE"))
+        return command_delete(server, line);
+    if (command_is(line, "MKD"))
+        return command_make_directory(server, line);
+    if (command_is(line, "RMD"))
+        return command_remove_directory(server, line);
+    if (command_is(line, "RNFR"))
+        return command_rename_from(server, line);
+    if (command_is(line, "RNTO"))
+        return command_rename_to(server, line);
+    if (command_is(line, "REST"))
+        return command_restart(server, line);
     if (command_is(line, "STOR"))
         return receive_file(server, line);
     if (command_is(line, "RETR"))

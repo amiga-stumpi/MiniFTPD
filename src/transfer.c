@@ -16,7 +16,7 @@ static char g_stor_path[MINIFTPD_PATH_SIZE * 2];
 
 int miniftpd_retrieve_file(const char *root, const char *virtual_path,
                            MiniFtpdTransferWriter writer, void *context,
-                           LONG *file_size)
+                           LONG restart_offset, LONG *file_size)
 {
     UBYTE *buffer;
     BPTR file;
@@ -34,6 +34,11 @@ int miniftpd_retrieve_file(const char *root, const char *virtual_path,
     file = Open((STRPTR)g_retr_path, MODE_OLDFILE);
     if (!file)
         return MINIFTPD_RETR_NOT_FOUND;
+    if (restart_offset < 0 || restart_offset > size ||
+        (restart_offset && Seek(file, restart_offset, OFFSET_BEGINNING) < 0)) {
+        Close(file);
+        return MINIFTPD_RETR_NOT_FOUND;
+    }
     buffer = (UBYTE *)AllocMem(RETR_BUFFER_SIZE, MEMF_PUBLIC);
     if (!buffer) {
         Close(file);
@@ -56,13 +61,13 @@ int miniftpd_retrieve_file(const char *root, const char *virtual_path,
     FreeMem(buffer, RETR_BUFFER_SIZE);
     Close(file);
     if (result == MINIFTPD_RETR_OK && file_size)
-        *file_size = size;
+        *file_size = size - restart_offset;
     return result;
 }
 
 int miniftpd_store_file(const char *root, const char *virtual_path,
                         MiniFtpdTransferReader reader, void *context,
-                        LONG *file_size)
+                        LONG restart_offset, LONG *file_size)
 {
     UBYTE *buffer;
     BPTR file;
@@ -78,12 +83,32 @@ int miniftpd_store_file(const char *root, const char *virtual_path,
     if (!miniftpd_path_resolve_upload(root, virtual_path,
                                       g_stor_path, sizeof(g_stor_path)))
         return MINIFTPD_STOR_BAD_PATH;
+    if (restart_offset < 0)
+        return MINIFTPD_STOR_BAD_PATH;
     buffer = (UBYTE *)AllocMem(STOR_BUFFER_SIZE, MEMF_PUBLIC);
     if (!buffer)
         return MINIFTPD_STOR_NO_MEMORY;
-    file = Open((STRPTR)g_stor_path, MODE_NEWFILE);
+    if (restart_offset) {
+        LONG existing_size;
+
+        if (!miniftpd_path_resolve_file(root, virtual_path,
+                                        g_stor_path, sizeof(g_stor_path),
+                                        &existing_size) ||
+            restart_offset > existing_size) {
+            FreeMem(buffer, STOR_BUFFER_SIZE);
+            return MINIFTPD_STOR_BAD_PATH;
+        }
+        file = Open((STRPTR)g_stor_path, MODE_OLDFILE);
+    } else {
+        file = Open((STRPTR)g_stor_path, MODE_NEWFILE);
+    }
     if (!file) {
         FreeMem(buffer, STOR_BUFFER_SIZE);
+        return MINIFTPD_STOR_OPEN_ERROR;
+    }
+    if (restart_offset && Seek(file, restart_offset, OFFSET_BEGINNING) < 0) {
+        FreeMem(buffer, STOR_BUFFER_SIZE);
+        Close(file);
         return MINIFTPD_STOR_OPEN_ERROR;
     }
     total = 0;

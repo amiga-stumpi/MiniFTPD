@@ -23,9 +23,9 @@ typedef int (*MiniFtpdTransferReader)(void *context,
 
 int miniftpd_retrieve_file(const char *root, const char *virtual_path,
                            MiniFtpdTransferWriter writer, void *context,
-                           LONG *file_size);
+                           LONG restart_offset, LONG *file_size);
 int miniftpd_store_file(const char *root, const char *virtual_path,
                         MiniFtpdTransferReader reader, void *context,
-                        LONG *file_size);
+                        LONG restart_offset, LONG *file_size);
 
 #endif
