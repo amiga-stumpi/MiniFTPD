@@ -13,7 +13,7 @@ updated here in the same commit as its implementation.
 | 4 | Session state | Complete |
 | 5 | Authentication | Complete |
 | 6 | Passive data connections | Complete |
-| 7 | Basic FTP commands | Planned |
+| 7 | Basic FTP commands | Complete |
 | 8 | Filesystem containment | Planned |
 | 9 | Directory listings | Planned |
 | 10 | Downloads | Planned |
@@ -119,14 +119,19 @@ Status: **Complete**
 
 ## 7. Basic FTP commands
 
-- `SYST`, `FEAT`, `NOOP`, `QUIT`
-- `USER`, `PASS`
-- `PWD`, `CWD`, `CDUP`
-- `TYPE`
-- `PASV`
-- `LIST`
-- `RETR`
-- `STOR`
+Status: **Complete**
+
+- Implement `SYST`, `FEAT`, `NOOP` and `QUIT`.
+- Keep `SYST`, `FEAT`, `NOOP`, `USER`, `PASS` and `QUIT` available before
+  authentication for broad FTP-client compatibility.
+- Implement authenticated `PWD`.
+- Implement safe root-only `CWD` and `CDUP` behavior until filesystem
+  containment is available.
+- Retain authenticated `TYPE` and `PASV`.
+- Return standards-based status codes for unsupported directories and
+  commands.
+- Implement `LIST`, `RETR` and `STOR` only in steps 9 through 11 after the
+  filesystem security boundary from step 8 is complete.
 
 ## 8. Filesystem containment
 

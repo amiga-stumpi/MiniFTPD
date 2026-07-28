@@ -278,6 +278,15 @@ static int process_command(struct MiniFtpdServer *server)
                    "221 MiniFTPD closing connection.\r\n");
         return 0;
     }
+    if (command_is(line, "SYST"))
+        return send_reply(server, server->session.control_fd,
+                          "215 AMIGA Type: L8.\r\n");
+    if (command_is(line, "FEAT"))
+        return send_reply(server, server->session.control_fd,
+                          "211 No additional features.\r\n");
+    if (command_is(line, "NOOP"))
+        return send_reply(server, server->session.control_fd,
+                          "200 NOOP command successful.\r\n");
     if (command_is(line, "USER")) {
         const char *argument = command_argument(line);
         server->session.login_state = MINIFTPD_LOGIN_USER;
@@ -326,6 +335,27 @@ static int process_command(struct MiniFtpdServer *server)
     if (server->session.login_state != MINIFTPD_LOGIN_AUTHENTICATED)
         return send_reply(server, server->session.control_fd,
                           "530 Please login with USER and PASS.\r\n");
+    if (command_is(line, "PWD"))
+        return send_reply(server, server->session.control_fd,
+                          "257 \"/\" is the current directory.\r\n");
+    if (command_is(line, "CWD")) {
+        const char *argument = command_argument(line);
+
+        if (!strcmp(argument, "/") || !strcmp(argument, ".")) {
+            server->session.cwd[0] = '/';
+            server->session.cwd[1] = '\0';
+            return send_reply(server, server->session.control_fd,
+                              "250 Directory changed to /.\r\n");
+        }
+        return send_reply(server, server->session.control_fd,
+                          "550 Directory unavailable.\r\n");
+    }
+    if (command_is(line, "CDUP")) {
+        server->session.cwd[0] = '/';
+        server->session.cwd[1] = '\0';
+        return send_reply(server, server->session.control_fd,
+                          "250 Directory changed to /.\r\n");
+    }
     if (command_is(line, "PASV"))
         return open_passive_listener(server);
     if (command_is(line, "TYPE")) {

@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project steps 1 through 6 are complete:
+Project steps 1 through 7 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -33,10 +33,14 @@ Project steps 1 through 6 are complete:
 - authenticated `PASV` with rotating configured passive ports
 - valid `227` replies using the control connection local IPv4 address
 - asynchronous acceptance of one temporary passive data connection
+- FTP client discovery commands `SYST`, `FEAT` and `NOOP`
+- authenticated `PWD` plus safe root-only `CWD` and `CDUP`
 
-Authenticated sessions accept `TYPE`, `PASV` and `QUIT`. Other commands receive a
-standards-compliant `502 Command not implemented` response until their
-respective roadmap phases are implemented.
+Authenticated sessions accept the implemented discovery, authentication,
+directory, transfer-mode, passive-mode and shutdown commands. File listing,
+download and upload commands remain assigned to their respective roadmap
+phases.
+
 
 ## Build
 
@@ -90,6 +94,16 @@ USER amiga
 331 Password required.
 PASS amiga
 230 Login successful.
+SYST
+215 AMIGA Type: L8.
+FEAT
+211 No additional features.
+PWD
+257 "/" is the current directory.
+CWD /
+250 Directory changed to /.
+CDUP
+250 Directory changed to /.
 TYPE A
 200 Type set to A.
 TYPE I
