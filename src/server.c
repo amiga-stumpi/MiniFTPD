@@ -15,6 +15,7 @@
 #include "miniftpd/socket_api.h"
 
 #define CONTROL_RECV_SIZE 256
+#define SEND_CHUNK_SIZE 512
 #define SEND_TIMEOUT_SECONDS 5
 #define DATA_CONNECT_TIMEOUT_SECONDS 10
 #define DATA_TRANSFER_TIMEOUT_SECONDS 10
@@ -145,11 +146,15 @@ static int send_all(struct MiniFtpdServer *server, int fd,
     int total;
     int error;
     int ready;
+    int chunk;
 
     total = 0;
     while (total < length) {
+        chunk = length - total;
+        if (chunk > SEND_CHUNK_SIZE)
+            chunk = SEND_CHUNK_SIZE;
         sent = miniftpd_send(server->socket_base, fd, text + total,
-                             length - total, 0);
+                             chunk, 0);
         if (sent > 0) {
             total += sent;
             continue;
