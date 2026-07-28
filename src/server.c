@@ -19,6 +19,15 @@
 #define DATA_CONNECT_TIMEOUT_SECONDS 10
 #define DATA_TRANSFER_TIMEOUT_SECONDS 10
 
+enum MiniFtpdDataError
+{
+    MINIFTPD_DATA_ERROR_NONE = 0,
+    MINIFTPD_DATA_ERROR_NO_PASSIVE,
+    MINIFTPD_DATA_ERROR_TIMEOUT,
+    MINIFTPD_DATA_ERROR_SOCKET,
+    MINIFTPD_DATA_ERROR_INTERRUPTED
+};
+
 struct MiniFtpdServer
 {
     struct Library *socket_base;
@@ -27,6 +36,7 @@ struct MiniFtpdServer
     struct MiniFtpdSession session;
     UBYTE command_overflow;
     UBYTE stop_requested;
+    UBYTE data_error;
     UWORD next_pasv_port;
 };
 
@@ -93,6 +103,12 @@ static void close_session_socket(struct MiniFtpdServer *server, int *fd)
     }
 }
 
+static void close_data_connection(struct MiniFtpdServer *server)
+{
+    close_session_socket(server, &server->session.data_fd);
+    close_session_socket(server, &server->session.passive_listen_fd);
+}
+
 static int set_nonblocking(struct MiniFtpdServer *server, int fd)
 {
     ULONG enabled;
@@ -104,8 +120,8 @@ static int set_nonblocking(struct MiniFtpdServer *server, int fd)
 
 static void close_client(struct MiniFtpdServer *server)
 {
-    close_session_socket(server, &server->session.data_fd);
-    close_session_socket(server, &server->session.passive_listen_fd);
+    close_data_connection(server);
+    server->data_error = MINIFTPD_DATA_ERROR_NONE;
     close_session_socket(server, &server->session.control_fd);
     reset_session(&server->session);
     server->command_overflow = 0;
@@ -116,6 +132,7 @@ static int wait_writable(struct MiniFtpdServer *server, int fd)
 {
     ULONG signals;
     int ready;
+    int error;
 
     for (;;) {
         MINIFTPD_FD_ZERO(&g_writefds);
@@ -127,14 +144,24 @@ static int wait_writable(struct MiniFtpdServer *server, int fd)
                                      &g_writefds, 0, &g_timeout, &signals);
         if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
             server->stop_requested = 1;
+            if (fd == server->session.data_fd)
+                server->data_error = MINIFTPD_DATA_ERROR_INTERRUPTED;
             return -1;
         }
-        if (ready >= 0 ||
-            miniftpd_socket_errno(server->socket_base) != MINIFTPD_EINTR)
+        if (ready >= 0)
             break;
+        error = miniftpd_socket_errno(server->socket_base);
+        if (error != MINIFTPD_EINTR) {
+            if (fd == server->session.data_fd)
+                server->data_error = MINIFTPD_DATA_ERROR_SOCKET;
+            return 0;
+        }
     }
-    if (ready <= 0)
+    if (ready == 0) {
+        if (fd == server->session.data_fd)
+            server->data_error = MINIFTPD_DATA_ERROR_TIMEOUT;
         return 0;
+    }
     return MINIFTPD_FD_ISSET(fd, &g_writefds) ? 1 : 0;
 }
 
@@ -146,6 +173,8 @@ static int send_all(struct MiniFtpdServer *server, int fd,
     int error;
     int ready;
 
+    if (fd == server->session.data_fd)
+        server->data_error = MINIFTPD_DATA_ERROR_NONE;
     total = 0;
     while (total < length) {
         sent = miniftpd_send(server->socket_base, fd, text + total,
@@ -157,8 +186,11 @@ static int send_all(struct MiniFtpdServer *server, int fd,
         error = miniftpd_socket_errno(server->socket_base);
         if (error == MINIFTPD_EINTR)
             continue;
-        if (!socket_would_block(error))
+        if (!socket_would_block(error)) {
+            if (fd == server->session.data_fd)
+                server->data_error = MINIFTPD_DATA_ERROR_SOCKET;
             return 0;
+        }
         ready = wait_writable(server, fd);
         if (ready <= 0)
             return 0;
@@ -170,6 +202,42 @@ static int send_reply(struct MiniFtpdServer *server, int fd,
                       const char *reply)
 {
     return send_all(server, fd, reply, strlen(reply));
+}
+
+static int data_connection_failure_reply(struct MiniFtpdServer *server)
+{
+    if (server->data_error == MINIFTPD_DATA_ERROR_INTERRUPTED)
+        return 0;
+    if (server->data_error == MINIFTPD_DATA_ERROR_TIMEOUT)
+        return send_reply(server, server->session.control_fd,
+                          "425 Data connection timed out.\r\n");
+    if (server->data_error == MINIFTPD_DATA_ERROR_SOCKET)
+        return send_reply(server, server->session.control_fd,
+                          "425 Cannot open data connection.\r\n");
+    return send_reply(server, server->session.control_fd,
+                      "425 Use PASV first.\r\n");
+}
+
+static int transfer_failure_reply(struct MiniFtpdServer *server)
+{
+    if (server->data_error == MINIFTPD_DATA_ERROR_INTERRUPTED)
+        return 0;
+    if (server->data_error == MINIFTPD_DATA_ERROR_TIMEOUT)
+        return send_reply(server, server->session.control_fd,
+                          "426 Data transfer timed out.\r\n");
+    return send_reply(server, server->session.control_fd,
+                      "426 Data connection error.\r\n");
+}
+
+static int store_failure_reply(struct MiniFtpdServer *server)
+{
+    if (server->data_error == MINIFTPD_DATA_ERROR_INTERRUPTED)
+        return 0;
+    if (server->data_error == MINIFTPD_DATA_ERROR_TIMEOUT)
+        return send_reply(server, server->session.control_fd,
+                          "426 Data transfer timed out; partial file kept.\r\n");
+    return send_reply(server, server->session.control_fd,
+                      "426 Data connection error; partial file kept.\r\n");
 }
 
 static char upper_ascii(char value)
@@ -259,28 +327,51 @@ static int wait_for_data_connection(struct MiniFtpdServer *server)
 {
     ULONG signals;
     int ready;
+    int error;
 
+    server->data_error = MINIFTPD_DATA_ERROR_NONE;
     if (server->session.data_fd >= 0)
         return 1;
-    if (server->session.passive_listen_fd < 0)
-        return 0;
-    MINIFTPD_FD_ZERO(&g_readfds);
-    MINIFTPD_FD_SET(server->session.passive_listen_fd, &g_readfds);
-    g_timeout.tv_sec = DATA_CONNECT_TIMEOUT_SECONDS;
-    g_timeout.tv_usec = 0;
-    signals = SIGBREAKF_CTRL_C;
-    ready = miniftpd_wait_select(server->socket_base,
-                                 server->session.passive_listen_fd + 1,
-                                 &g_readfds, 0, 0, &g_timeout, &signals);
-    if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
-        server->stop_requested = 1;
+    if (server->session.passive_listen_fd < 0) {
+        server->data_error = MINIFTPD_DATA_ERROR_NO_PASSIVE;
         return 0;
     }
-    if (ready <= 0 ||
-        !MINIFTPD_FD_ISSET(server->session.passive_listen_fd, &g_readfds))
+    for (;;) {
+        MINIFTPD_FD_ZERO(&g_readfds);
+        MINIFTPD_FD_SET(server->session.passive_listen_fd, &g_readfds);
+        g_timeout.tv_sec = DATA_CONNECT_TIMEOUT_SECONDS;
+        g_timeout.tv_usec = 0;
+        signals = SIGBREAKF_CTRL_C;
+        ready = miniftpd_wait_select(server->socket_base,
+                                     server->session.passive_listen_fd + 1,
+                                     &g_readfds, 0, 0, &g_timeout, &signals);
+        if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
+            server->stop_requested = 1;
+            server->data_error = MINIFTPD_DATA_ERROR_INTERRUPTED;
+            return 0;
+        }
+        if (ready >= 0)
+            break;
+        error = miniftpd_socket_errno(server->socket_base);
+        if (error != MINIFTPD_EINTR) {
+            server->data_error = MINIFTPD_DATA_ERROR_SOCKET;
+            return 0;
+        }
+    }
+    if (ready == 0) {
+        server->data_error = MINIFTPD_DATA_ERROR_TIMEOUT;
         return 0;
+    }
+    if (!MINIFTPD_FD_ISSET(server->session.passive_listen_fd, &g_readfds)) {
+        server->data_error = MINIFTPD_DATA_ERROR_SOCKET;
+        return 0;
+    }
     accept_data_client(server);
-    return server->session.data_fd >= 0;
+    if (server->session.data_fd < 0) {
+        server->data_error = MINIFTPD_DATA_ERROR_SOCKET;
+        return 0;
+    }
+    return 1;
 }
 
 static int listing_write(void *context, const char *data, int length)
@@ -315,8 +406,10 @@ static int store_read(void *context, UBYTE *data, int length)
         error = miniftpd_socket_errno(server->socket_base);
         if (error == MINIFTPD_EINTR)
             continue;
-        if (!socket_would_block(error))
+        if (!socket_would_block(error)) {
+            server->data_error = MINIFTPD_DATA_ERROR_SOCKET;
             return -1;
+        }
         MINIFTPD_FD_ZERO(&g_readfds);
         MINIFTPD_FD_SET(server->session.data_fd, &g_readfds);
         g_timeout.tv_sec = DATA_TRANSFER_TIMEOUT_SECONDS;
@@ -328,14 +421,24 @@ static int store_read(void *context, UBYTE *data, int length)
                                      &g_timeout, &signals);
         if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
             server->stop_requested = 1;
+            server->data_error = MINIFTPD_DATA_ERROR_INTERRUPTED;
             return -1;
         }
-        if (ready < 0 &&
-            miniftpd_socket_errno(server->socket_base) == MINIFTPD_EINTR)
-            continue;
-        if (ready <= 0 ||
-            !MINIFTPD_FD_ISSET(server->session.data_fd, &g_readfds))
+        if (ready < 0) {
+            error = miniftpd_socket_errno(server->socket_base);
+            if (error == MINIFTPD_EINTR)
+                continue;
+            server->data_error = MINIFTPD_DATA_ERROR_SOCKET;
             return -1;
+        }
+        if (ready == 0) {
+            server->data_error = MINIFTPD_DATA_ERROR_TIMEOUT;
+            return -1;
+        }
+        if (!MINIFTPD_FD_ISSET(server->session.data_fd, &g_readfds)) {
+            server->data_error = MINIFTPD_DATA_ERROR_SOCKET;
+            return -1;
+        }
     }
 }
 
@@ -361,19 +464,18 @@ static int receive_file(struct MiniFtpdServer *server, const char *line)
         return send_reply(server, server->session.control_fd,
                           "550 File unavailable.\r\n");
     if (!wait_for_data_connection(server)) {
-        close_session_socket(server, &server->session.data_fd);
-        close_session_socket(server, &server->session.passive_listen_fd);
-        return send_reply(server, server->session.control_fd,
-                          "425 Use PASV first.\r\n");
+        close_data_connection(server);
+        return data_connection_failure_reply(server);
     }
     if (!send_reply(server, server->session.control_fd,
-                    "150 Opening data connection for file upload.\r\n"))
+                    "150 Opening data connection for file upload.\r\n")) {
+        close_data_connection(server);
         return 0;
+    }
     result = miniftpd_store_file(server->config->root,
                                  g_normalized_path,
                                  store_read, server, restart_offset, &file_size);
-    close_session_socket(server, &server->session.data_fd);
-    close_session_socket(server, &server->session.passive_listen_fd);
+    close_data_connection(server);
     if (result == MINIFTPD_STOR_OK) {
         sprintf(g_path_reply,
                 "226 Transfer complete (%ld bytes received).\r\n",
@@ -381,8 +483,7 @@ static int receive_file(struct MiniFtpdServer *server, const char *line)
         return send_reply(server, server->session.control_fd, g_path_reply);
     }
     if (result == MINIFTPD_STOR_READ_ERROR)
-        return send_reply(server, server->session.control_fd,
-                          "426 Data connection error; partial file kept.\r\n");
+        return store_failure_reply(server);
     if (result == MINIFTPD_STOR_NO_MEMORY)
         return send_reply(server, server->session.control_fd,
                           "451 Not enough memory for transfer.\r\n");
@@ -417,28 +518,26 @@ static int send_file(struct MiniFtpdServer *server, const char *line)
         return send_reply(server, server->session.control_fd,
                           "550 File unavailable.\r\n");
     if (!wait_for_data_connection(server)) {
-        close_session_socket(server, &server->session.data_fd);
-        close_session_socket(server, &server->session.passive_listen_fd);
-        return send_reply(server, server->session.control_fd,
-                          "425 Use PASV first.\r\n");
+        close_data_connection(server);
+        return data_connection_failure_reply(server);
     }
     file_size -= restart_offset;
     sprintf(g_path_reply,
             "150 Opening data connection for file transfer (%ld bytes).\r\n",
             (long)file_size);
-    if (!send_reply(server, server->session.control_fd, g_path_reply))
+    if (!send_reply(server, server->session.control_fd, g_path_reply)) {
+        close_data_connection(server);
         return 0;
+    }
     result = miniftpd_retrieve_file(server->config->root,
                                     g_normalized_path,
                                     retrieve_write, server, restart_offset, 0);
-    close_session_socket(server, &server->session.data_fd);
-    close_session_socket(server, &server->session.passive_listen_fd);
+    close_data_connection(server);
     if (result == MINIFTPD_RETR_OK)
         return send_reply(server, server->session.control_fd,
                           "226 Transfer complete.\r\n");
     if (result == MINIFTPD_RETR_WRITE_ERROR)
-        return send_reply(server, server->session.control_fd,
-                          "426 Data connection error.\r\n");
+        return transfer_failure_reply(server);
     if (result == MINIFTPD_RETR_NO_MEMORY)
         return send_reply(server, server->session.control_fd,
                           "451 Not enough memory for transfer.\r\n");
@@ -467,25 +566,23 @@ static int send_directory_listing(struct MiniFtpdServer *server,
         return send_reply(server, server->session.control_fd,
                           "550 Directory unavailable.\r\n");
     if (!wait_for_data_connection(server)) {
-        close_session_socket(server, &server->session.data_fd);
-        close_session_socket(server, &server->session.passive_listen_fd);
-        return send_reply(server, server->session.control_fd,
-                          "425 Use PASV first.\r\n");
+        close_data_connection(server);
+        return data_connection_failure_reply(server);
     }
     if (!send_reply(server, server->session.control_fd,
-                    "150 Opening ASCII mode data connection for file list.\r\n"))
+                    "150 Opening ASCII mode data connection for file list.\r\n")) {
+        close_data_connection(server);
         return 0;
+    }
     result = miniftpd_list_directory(server->config->root,
                                      g_normalized_path,
                                      listing_write, server);
-    close_session_socket(server, &server->session.data_fd);
-    close_session_socket(server, &server->session.passive_listen_fd);
+    close_data_connection(server);
     if (result > 0)
         return send_reply(server, server->session.control_fd,
                           "226 Directory send OK.\r\n");
     if (result < 0)
-        return send_reply(server, server->session.control_fd,
-                          "426 Data connection error.\r\n");
+        return transfer_failure_reply(server);
     return send_reply(server, server->session.control_fd,
                       "451 Could not read directory.\r\n");
 }
@@ -617,8 +714,7 @@ static int open_passive_listener(struct MiniFtpdServer *server)
     int fd;
     char reply[96];
 
-    close_session_socket(server, &server->session.data_fd);
-    close_session_socket(server, &server->session.passive_listen_fd);
+    close_data_connection(server);
     address_length = sizeof(local_address);
     if (miniftpd_getsockname(server->socket_base, server->session.control_fd,
                              (struct MiniFtpdSockAddr *)&local_address,
@@ -876,7 +972,7 @@ static int receive_control(struct MiniFtpdServer *server)
     if (received == 0)
         return 0;
     error = miniftpd_socket_errno(server->socket_base);
-    return socket_would_block(error);
+    return error == MINIFTPD_EINTR || socket_would_block(error);
 }
 
 static void accept_data_client(struct MiniFtpdServer *server)
@@ -976,6 +1072,7 @@ int miniftpd_server_run(struct Library *socket_base,
     int highest_fd;
     int ready;
     int running;
+    int error;
     char line[96];
 
     memset(&server, 0, sizeof(server));
@@ -1023,8 +1120,10 @@ int miniftpd_server_run(struct Library *socket_base,
             continue;
         }
         if (ready < 0) {
-            console_number("WaitSelect() failed, errno=",
-                           miniftpd_socket_errno(socket_base));
+            error = miniftpd_socket_errno(socket_base);
+            if (error == MINIFTPD_EINTR)
+                continue;
+            console_number("WaitSelect() failed, errno=", error);
             break;
         }
         if (ready == 0 &&

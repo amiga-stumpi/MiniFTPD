@@ -17,9 +17,9 @@ updated here in the same commit as its implementation.
 | 8 | Filesystem containment | Complete |
 | 9 | Directory listings | Complete |
 | 10 | Downloads | Complete |
-| 11 | Uploads | Planned |
-| 12 | Additional file commands | Planned |
-| 13 | Error handling and cleanup | Planned |
+| 11 | Uploads | Complete |
+| 12 | Additional file commands | Complete |
+| 13 | Error handling and cleanup | Complete |
 | 14 | Optional logging | Planned |
 | 15 | Regression testing | Planned |
 | 16 | Future extensions | Deferred |
@@ -206,11 +206,16 @@ Status: **Complete**
 
 ## 13. Error handling and cleanup
 
-- Distinguish FTP status, socket errors, timeouts and clean EOF.
-- Use centralized idempotent cleanup paths.
-- Preserve the control connection after recoverable transfer failures.
-- Reset the complete session after control connection loss.
-- Handle `EWOULDBLOCK` without busy waiting.
+Status: **Complete**
+
+- [x] Distinguish missing passive setup, socket errors, timeouts, interruption and clean upload EOF.
+- [x] Return specific `425` passive-connect and `426` transfer failure replies.
+- [x] Use centralized idempotent cleanup for passive-listener and data sockets.
+- [x] Clean data sockets when preliminary `150` replies cannot be sent.
+- [x] Preserve the control connection after recoverable transfer failures.
+- [x] Reset the complete session after control connection loss.
+- [x] Retry interrupted socket and `WaitSelect()` operations.
+- [x] Handle `EWOULDBLOCK` through `WaitSelect()` without busy waiting.
 
 ## 14. Optional logging
 

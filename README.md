@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project steps 1 through 12 are complete:
+Project steps 1 through 13 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -46,11 +46,14 @@ Project steps 1 through 12 are complete:
 - file size queries, deletion, directory management and safe renaming
 - resumable `RETR` and `STOR` transfers through `REST`
 - explicit 16 KB public-memory transfer buffer with complete cleanup
+- classified passive-connect and transfer timeout errors
+- centralized idempotent data-connection cleanup
+- recoverable transfer failures that preserve the FTP control session
+- `EINTR` retry and `EWOULDBLOCK` waiting without busy loops
 
 Authenticated sessions accept the implemented discovery, authentication,
-directory, transfer-mode, passive-mode and shutdown commands. File listing,
-download and upload commands remain assigned to their respective roadmap
-phases.
+directory, transfer-mode, passive-mode, file-management, transfer and shutdown
+commands.
 
 
 ## Build
