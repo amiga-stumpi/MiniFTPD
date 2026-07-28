@@ -10,7 +10,7 @@
 #include "miniftpd/server.h"
 
 static const char version_tag[] =
-    "$VER: " MINIFTPD_NAME " " MINIFTPD_VERSION " (27.07.2026)";
+    "$VER: " MINIFTPD_NAME " " MINIFTPD_VERSION " (28.07.2026)";
 
 static void console_puts(const char *text)
 {

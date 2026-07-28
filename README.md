@@ -8,6 +8,8 @@ assumptions and large automatic buffers.
 
 ## Current status
 
+MiniFTPD 1.0 is the first stable release.
+
 Project steps 1 through 13 are complete:
 
 - standalone AmigaOS executable scaffold
