@@ -196,6 +196,42 @@ int miniftpd_path_resolve_file(const char *root, const char *virtual_path,
     return valid;
 }
 
+int miniftpd_path_resolve_upload(const char *root, const char *virtual_path,
+                                 char *dos_path, int dos_path_size)
+{
+    char parent[MINIFTPD_PATH_SIZE];
+    BPTR target_lock;
+    int length;
+
+    if (!root || !virtual_path || virtual_path[0] != '/' ||
+        !virtual_path[1] || !dos_path)
+        return 0;
+    length = strlen(virtual_path);
+    if (length >= (int)sizeof(parent) || virtual_path[length - 1] == '/')
+        return 0;
+    memcpy(parent, virtual_path, length + 1);
+    while (length > 1 && parent[length - 1] != '/')
+        --length;
+    if (length > 1)
+        --length;
+    parent[length] = '\0';
+    if (!miniftpd_path_directory_exists(root, parent) ||
+        !miniftpd_path_build_dos(root, virtual_path,
+                                 dos_path, dos_path_size))
+        return 0;
+    target_lock = Lock((STRPTR)dos_path, SHARED_LOCK);
+    if (target_lock) {
+        int is_directory;
+
+        is_directory = Examine(target_lock, &g_path_fib) &&
+                       g_path_fib.fib_DirEntryType > 0;
+        UnLock(target_lock);
+        if (is_directory)
+            return 0;
+    }
+    return 1;
+}
+
 int miniftpd_path_directory_exists(const char *root,
                                    const char *virtual_path)
 {

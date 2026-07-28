@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project steps 1 through 10 are complete:
+Project steps 1 through 11 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -42,6 +42,7 @@ Project steps 1 through 10 are complete:
 - passive `LIST` for current or explicitly selected contained directories
 - streamed Unix-style directory rows with file type and size
 - passive `RETR` downloads with byte-preserving block transfers
+- passive `STOR` uploads with bounded block transfers
 - explicit 16 KB public-memory transfer buffer with complete cleanup
 
 Authenticated sessions accept the implemented discovery, authentication,
@@ -152,6 +153,13 @@ Files can be downloaded with the standard FTP `get` command after selecting
 binary mode. `RETR` also accepts contained absolute and relative virtual paths.
 For byte-for-byte verification, compare the source and downloaded file sizes and
 checksums.
+
+Files can be uploaded with the standard FTP `put` command when `readonly=0`.
+`STOR` validates the target and its existing parent directory against the
+configured FTP root before creating or replacing a file. Upload data is received
+and written in 16 KB public-memory blocks. A clean data-socket EOF completes the
+transfer. If the connection breaks or a disk write fails, MiniFTPD reports the
+error and intentionally keeps the partial file for diagnosis or recovery.
 
 ## Documentation
 

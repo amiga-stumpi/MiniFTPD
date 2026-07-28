@@ -183,11 +183,14 @@ Status: **Complete**
 
 ## 11. Uploads
 
-- Implement `STOR`.
-- Receive and write bounded blocks.
-- Treat data-socket EOF as normal completion.
-- Report disk-full and write errors.
-- Keep partial files initially and document that behavior.
+Status: **Complete**
+
+- [x] Implement `STOR`.
+- [x] Receive and write bounded 16 KB public-memory blocks.
+- [x] Treat data-socket EOF as normal completion.
+- [x] Report data, disk-full and write errors.
+- [x] Keep partial files after interrupted or failed transfers and document
+  that behavior.
 
 ## 12. Additional file commands
 

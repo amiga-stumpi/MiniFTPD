@@ -17,6 +17,7 @@
 #define CONTROL_RECV_SIZE 256
 #define SEND_TIMEOUT_SECONDS 5
 #define DATA_CONNECT_TIMEOUT_SECONDS 10
+#define DATA_TRANSFER_TIMEOUT_SECONDS 10
 
 struct MiniFtpdServer
 {
@@ -260,6 +261,92 @@ static int retrieve_write(void *context, const UBYTE *data, int length)
 
     return send_all(server, server->session.data_fd,
                     (const char *)data, length);
+}
+
+static int store_read(void *context, UBYTE *data, int length)
+{
+    struct MiniFtpdServer *server = (struct MiniFtpdServer *)context;
+    ULONG signals;
+    int received;
+    int error;
+    int ready;
+
+    for (;;) {
+        received = miniftpd_recv(server->socket_base,
+                                 server->session.data_fd,
+                                 data, length, 0);
+        if (received >= 0)
+            return received;
+        error = miniftpd_socket_errno(server->socket_base);
+        if (!socket_would_block(error))
+            return -1;
+        MINIFTPD_FD_ZERO(&g_readfds);
+        MINIFTPD_FD_SET(server->session.data_fd, &g_readfds);
+        g_timeout.tv_sec = DATA_TRANSFER_TIMEOUT_SECONDS;
+        g_timeout.tv_usec = 0;
+        signals = SIGBREAKF_CTRL_C;
+        ready = miniftpd_wait_select(server->socket_base,
+                                     server->session.data_fd + 1,
+                                     &g_readfds, 0, 0,
+                                     &g_timeout, &signals);
+        if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
+            server->stop_requested = 1;
+            return -1;
+        }
+        if (ready <= 0 ||
+            !MINIFTPD_FD_ISSET(server->session.data_fd, &g_readfds))
+            return -1;
+    }
+}
+
+static int receive_file(struct MiniFtpdServer *server, const char *line)
+{
+    const char *argument;
+    LONG file_size;
+    int result;
+
+    argument = command_argument(line);
+    if (!argument[0] ||
+        !miniftpd_path_normalize(server->session.cwd, argument,
+                                 g_normalized_path,
+                                 sizeof(g_normalized_path)) ||
+        !miniftpd_path_resolve_upload(server->config->root,
+                                      g_normalized_path,
+                                      g_resolved_path,
+                                      sizeof(g_resolved_path)))
+        return send_reply(server, server->session.control_fd,
+                          "550 File unavailable.\r\n");
+    if (!wait_for_data_connection(server)) {
+        close_session_socket(server, &server->session.data_fd);
+        close_session_socket(server, &server->session.passive_listen_fd);
+        return send_reply(server, server->session.control_fd,
+                          "425 Use PASV first.\r\n");
+    }
+    if (!send_reply(server, server->session.control_fd,
+                    "150 Opening data connection for file upload.\r\n"))
+        return 0;
+    result = miniftpd_store_file(server->config->root,
+                                 g_normalized_path,
+                                 store_read, server, &file_size);
+    close_session_socket(server, &server->session.data_fd);
+    close_session_socket(server, &server->session.passive_listen_fd);
+    if (result == MINIFTPD_STOR_OK) {
+        sprintf(g_path_reply,
+                "226 Transfer complete (%ld bytes received).\r\n",
+                (long)file_size);
+        return send_reply(server, server->session.control_fd, g_path_reply);
+    }
+    if (result == MINIFTPD_STOR_READ_ERROR)
+        return send_reply(server, server->session.control_fd,
+                          "426 Data connection error; partial file kept.\r\n");
+    if (result == MINIFTPD_STOR_NO_MEMORY)
+        return send_reply(server, server->session.control_fd,
+                          "451 Not enough memory for transfer.\r\n");
+    if (result == MINIFTPD_STOR_WRITE_ERROR)
+        return send_reply(server, server->session.control_fd,
+                          "452 Could not write file; partial file kept.\r\n");
+    return send_reply(server, server->session.control_fd,
+                      "550 File unavailable.\r\n");
 }
 
 static int send_file(struct MiniFtpdServer *server, const char *line)
@@ -530,6 +617,8 @@ static int process_command(struct MiniFtpdServer *server)
         !miniftpd_path_writes_allowed(server->config))
         return send_reply(server, server->session.control_fd,
                           "550 Server is read-only.\r\n");
+    if (command_is(line, "STOR"))
+        return receive_file(server, line);
     if (command_is(line, "RETR"))
         return send_file(server, line);
     if (command_is(line, "LIST"))

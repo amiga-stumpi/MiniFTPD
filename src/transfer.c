@@ -9,8 +9,10 @@
 #include "miniftpd/transfer.h"
 
 #define RETR_BUFFER_SIZE 16384
+#define STOR_BUFFER_SIZE 16384
 
 static char g_retr_path[MINIFTPD_PATH_SIZE * 2];
+static char g_stor_path[MINIFTPD_PATH_SIZE * 2];
 
 int miniftpd_retrieve_file(const char *root, const char *virtual_path,
                            MiniFtpdTransferWriter writer, void *context,
@@ -55,5 +57,55 @@ int miniftpd_retrieve_file(const char *root, const char *virtual_path,
     Close(file);
     if (result == MINIFTPD_RETR_OK && file_size)
         *file_size = size;
+    return result;
+}
+
+int miniftpd_store_file(const char *root, const char *virtual_path,
+                        MiniFtpdTransferReader reader, void *context,
+                        LONG *file_size)
+{
+    UBYTE *buffer;
+    BPTR file;
+    LONG received;
+    LONG written;
+    LONG total;
+    int result;
+
+    if (file_size)
+        *file_size = 0;
+    if (!root || !virtual_path || !reader)
+        return MINIFTPD_STOR_BAD_PATH;
+    if (!miniftpd_path_resolve_upload(root, virtual_path,
+                                      g_stor_path, sizeof(g_stor_path)))
+        return MINIFTPD_STOR_BAD_PATH;
+    buffer = (UBYTE *)AllocMem(STOR_BUFFER_SIZE, MEMF_PUBLIC);
+    if (!buffer)
+        return MINIFTPD_STOR_NO_MEMORY;
+    file = Open((STRPTR)g_stor_path, MODE_NEWFILE);
+    if (!file) {
+        FreeMem(buffer, STOR_BUFFER_SIZE);
+        return MINIFTPD_STOR_OPEN_ERROR;
+    }
+    total = 0;
+    result = MINIFTPD_STOR_OK;
+    for (;;) {
+        received = reader(context, buffer, STOR_BUFFER_SIZE);
+        if (received < 0) {
+            result = MINIFTPD_STOR_READ_ERROR;
+            break;
+        }
+        if (received == 0)
+            break;
+        written = Write(file, buffer, received);
+        if (written != received) {
+            result = MINIFTPD_STOR_WRITE_ERROR;
+            break;
+        }
+        total += received;
+    }
+    FreeMem(buffer, STOR_BUFFER_SIZE);
+    Close(file);
+    if (file_size)
+        *file_size = total;
     return result;
 }
