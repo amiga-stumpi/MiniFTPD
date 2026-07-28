@@ -117,16 +117,21 @@ static int wait_writable(struct MiniFtpdServer *server, int fd)
     ULONG signals;
     int ready;
 
-    MINIFTPD_FD_ZERO(&g_writefds);
-    MINIFTPD_FD_SET(fd, &g_writefds);
-    g_timeout.tv_sec = SEND_TIMEOUT_SECONDS;
-    g_timeout.tv_usec = 0;
-    signals = SIGBREAKF_CTRL_C;
-    ready = miniftpd_wait_select(server->socket_base, fd + 1, 0,
-                                 &g_writefds, 0, &g_timeout, &signals);
-    if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
-        server->stop_requested = 1;
-        return -1;
+    for (;;) {
+        MINIFTPD_FD_ZERO(&g_writefds);
+        MINIFTPD_FD_SET(fd, &g_writefds);
+        g_timeout.tv_sec = SEND_TIMEOUT_SECONDS;
+        g_timeout.tv_usec = 0;
+        signals = SIGBREAKF_CTRL_C;
+        ready = miniftpd_wait_select(server->socket_base, fd + 1, 0,
+                                     &g_writefds, 0, &g_timeout, &signals);
+        if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
+            server->stop_requested = 1;
+            return -1;
+        }
+        if (ready >= 0 ||
+            miniftpd_socket_errno(server->socket_base) != MINIFTPD_EINTR)
+            break;
     }
     if (ready <= 0)
         return 0;
@@ -150,6 +155,8 @@ static int send_all(struct MiniFtpdServer *server, int fd,
             continue;
         }
         error = miniftpd_socket_errno(server->socket_base);
+        if (error == MINIFTPD_EINTR)
+            continue;
         if (!socket_would_block(error))
             return 0;
         ready = wait_writable(server, fd);
@@ -278,6 +285,8 @@ static int store_read(void *context, UBYTE *data, int length)
         if (received >= 0)
             return received;
         error = miniftpd_socket_errno(server->socket_base);
+        if (error == MINIFTPD_EINTR)
+            continue;
         if (!socket_would_block(error))
             return -1;
         MINIFTPD_FD_ZERO(&g_readfds);
@@ -293,6 +302,9 @@ static int store_read(void *context, UBYTE *data, int length)
             server->stop_requested = 1;
             return -1;
         }
+        if (ready < 0 &&
+            miniftpd_socket_errno(server->socket_base) == MINIFTPD_EINTR)
+            continue;
         if (ready <= 0 ||
             !MINIFTPD_FD_ISSET(server->session.data_fd, &g_readfds))
             return -1;
