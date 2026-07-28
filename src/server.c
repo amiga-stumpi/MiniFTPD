@@ -140,6 +140,17 @@ static char upper_ascii(char value)
     return value;
 }
 
+static int text_equal_ci(const char *left, const char *right)
+{
+    while (*left && *right) {
+        if (upper_ascii(*left) != upper_ascii(*right))
+            return 0;
+        ++left;
+        ++right;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
 static int command_is(const char *line, const char *command)
 {
     int position;
@@ -184,6 +195,54 @@ static int process_command(struct MiniFtpdServer *server)
                    "221 MiniFTPD closing connection.\r\n");
         return 0;
     }
+    if (command_is(line, "USER")) {
+        const char *argument = command_argument(line);
+        server->session.login_state = MINIFTPD_LOGIN_USER;
+        server->session.anonymous_login = 0;
+        server->session.user_valid = 0;
+        if (argument[0] && !strcmp(argument, server->config->user))
+            server->session.user_valid = 1;
+        else if (server->config->anonymous &&
+                 (text_equal_ci(argument, "anonymous") ||
+                  text_equal_ci(argument, "ftp"))) {
+            server->session.user_valid = 1;
+            server->session.anonymous_login = 1;
+        }
+        return send_reply(server, server->session.control_fd,
+                          "331 Password required.\r\n");
+    }
+    if (command_is(line, "PASS")) {
+        const char *argument = command_argument(line);
+        int authenticated;
+
+        if (server->session.login_state != MINIFTPD_LOGIN_USER)
+            return send_reply(server, server->session.control_fd,
+                              "503 Login with USER first.\r\n");
+        authenticated = server->session.user_valid &&
+            (server->session.anonymous_login ||
+             !strcmp(argument, server->config->password));
+        if (authenticated) {
+            server->session.login_state = MINIFTPD_LOGIN_AUTHENTICATED;
+            server->session.failed_logins = 0;
+            return send_reply(server, server->session.control_fd,
+                              "230 Login successful.\r\n");
+        }
+        server->session.login_state = MINIFTPD_LOGIN_NONE;
+        server->session.user_valid = 0;
+        server->session.anonymous_login = 0;
+        if (server->session.failed_logins < 255)
+            ++server->session.failed_logins;
+        if (server->session.failed_logins >= 3) {
+            send_reply(server, server->session.control_fd,
+                       "421 Too many login failures.\r\n");
+            return 0;
+        }
+        return send_reply(server, server->session.control_fd,
+                          "530 Login incorrect.\r\n");
+    }
+    if (server->session.login_state != MINIFTPD_LOGIN_AUTHENTICATED)
+        return send_reply(server, server->session.control_fd,
+                          "530 Please login with USER and PASS.\r\n");
     if (command_is(line, "TYPE")) {
         const char *argument = command_argument(line);
         if ((argument[0] == 'A' || argument[0] == 'a') && !argument[1]) {

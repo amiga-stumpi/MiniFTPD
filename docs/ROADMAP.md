@@ -11,7 +11,7 @@ updated here in the same commit as its implementation.
 | 2 | Configuration | Complete |
 | 3 | TCP control connection | Complete |
 | 4 | Session state | Complete |
-| 5 | Authentication | Planned |
+| 5 | Authentication | Complete |
 | 6 | Passive data connections | Planned |
 | 7 | Basic FTP commands | Planned |
 | 8 | Filesystem containment | Planned |
@@ -91,10 +91,16 @@ Status: **Complete**
 
 ## 5. Authentication
 
+Status: **Complete**
+
 - Implement `USER` and `PASS`.
 - Optionally allow anonymous access.
 - Restrict commands until authentication succeeds.
-- Introduce delays or connection limits for repeated failures if necessary.
+- Limit each control connection to three failed password attempts.
+- Keep password arguments out of console logging.
+- Return the same password challenge for known and unknown users.
+- Support `anonymous` and `ftp` when anonymous access is enabled.
+
 
 ## 6. Passive data connections
 

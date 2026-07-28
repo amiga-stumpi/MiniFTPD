@@ -34,6 +34,9 @@ struct MiniFtpdSession
     enum MiniFtpdLoginState login_state;
     enum MiniFtpdTransferMode transfer_mode;
     UWORD idle_seconds;
+    UBYTE user_valid;
+    UBYTE anonymous_login;
+    UBYTE failed_logins;
     char cwd[MINIFTPD_CWD_SIZE];
     char command[MINIFTPD_COMMAND_SIZE];
     UWORD command_len;

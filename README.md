@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project steps 1 through 3 are complete:
+Project steps 1 through 5 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -26,8 +26,11 @@ Project steps 1 through 3 are complete:
 - configurable control-connection inactivity timeout
 - independent cleanup for control, passive-listener and data sockets
 - `TYPE A` and `TYPE I` transfer-mode selection
+- configured `USER`/`PASS` authentication
+- optional anonymous login as `anonymous` or `ftp`
+- pre-authentication command restrictions and failed-login limiting
 
-The current protocol skeleton accepts `QUIT`. Other commands receive a
+Authenticated sessions accept `TYPE` and `QUIT`. Other commands receive a
 standards-compliant `502 Command not implemented` response until their
 respective roadmap phases are implemented.
 
@@ -65,7 +68,7 @@ MiniFTPD creates it beside the executable using safe defaults. Unknown keys,
 malformed values, reversed passive-port ranges and oversized files stop startup
 with an error. The configured password is never printed.
 
-## Step 3 test
+## Control and authentication test
 
 Start MiniFTPD on the Amiga and connect from another machine:
 
@@ -77,8 +80,12 @@ The control connection should behave as follows:
 
 ```text
 220 MiniFTPD ready.
-NOOP
-502 Command not implemented.
+TYPE I
+530 Please login with USER and PASS.
+USER amiga
+331 Password required.
+PASS amiga
+230 Login successful.
 TYPE A
 200 Type set to A.
 TYPE I
