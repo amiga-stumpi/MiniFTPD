@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "miniftpd/config.h"
+#include "miniftpd/path.h"
 #include "miniftpd/server.h"
 #include "miniftpd/session.h"
 #include "miniftpd/socket_api.h"
@@ -26,6 +27,8 @@ struct MiniFtpdServer
 };
 
 static UBYTE g_control_recv[CONTROL_RECV_SIZE];
+static char g_path_reply[MINIFTPD_CWD_SIZE + 48];
+static char g_normalized_path[MINIFTPD_CWD_SIZE];
 static struct MiniFtpdFdSet g_readfds;
 static struct MiniFtpdFdSet g_writefds;
 static struct MiniFtpdTimeVal g_timeout;
@@ -335,27 +338,44 @@ static int process_command(struct MiniFtpdServer *server)
     if (server->session.login_state != MINIFTPD_LOGIN_AUTHENTICATED)
         return send_reply(server, server->session.control_fd,
                           "530 Please login with USER and PASS.\r\n");
-    if (command_is(line, "PWD"))
-        return send_reply(server, server->session.control_fd,
-                          "257 \"/\" is the current directory.\r\n");
+    if (command_is(line, "PWD")) {
+        sprintf(g_path_reply, "257 \"%s\" is the current directory.\r\n",
+                server->session.cwd);
+        return send_reply(server, server->session.control_fd, g_path_reply);
+    }
     if (command_is(line, "CWD")) {
         const char *argument = command_argument(line);
 
-        if (!strcmp(argument, "/") || !strcmp(argument, ".")) {
-            server->session.cwd[0] = '/';
-            server->session.cwd[1] = '\0';
+        if (miniftpd_path_normalize(server->session.cwd, argument,
+                                    g_normalized_path, sizeof(g_normalized_path)) &&
+            miniftpd_path_directory_exists(server->config->root,
+                                           g_normalized_path)) {
+            strcpy(server->session.cwd, g_normalized_path);
             return send_reply(server, server->session.control_fd,
-                              "250 Directory changed to /.\r\n");
+                              "250 Directory changed.\r\n");
         }
         return send_reply(server, server->session.control_fd,
                           "550 Directory unavailable.\r\n");
     }
     if (command_is(line, "CDUP")) {
-        server->session.cwd[0] = '/';
-        server->session.cwd[1] = '\0';
+        if (!strcmp(server->session.cwd, "/"))
+            return send_reply(server, server->session.control_fd,
+                              "250 Directory changed.\r\n");
+        if (miniftpd_path_normalize(server->session.cwd, "..",
+                                    g_normalized_path, sizeof(g_normalized_path)) &&
+            miniftpd_path_directory_exists(server->config->root,
+                                           g_normalized_path)) {
+            strcpy(server->session.cwd, g_normalized_path);
+            return send_reply(server, server->session.control_fd,
+                              "250 Directory changed.\r\n");
+        }
         return send_reply(server, server->session.control_fd,
-                          "250 Directory changed to /.\r\n");
+                          "550 Directory unavailable.\r\n");
     }
+    if (command_is(line, "STOR") &&
+        !miniftpd_path_writes_allowed(server->config))
+        return send_reply(server, server->session.control_fd,
+                          "550 Server is read-only.\r\n");
     if (command_is(line, "PASV"))
         return open_passive_listener(server);
     if (command_is(line, "TYPE")) {
@@ -535,6 +555,10 @@ int miniftpd_server_run(struct Library *socket_base,
     server.listen_fd = -1;
     server.next_pasv_port = config->pasv_port_min;
     reset_session(&server.session);
+    if (!miniftpd_path_root_valid(config->root)) {
+        console_write("Configured FTP root is not an accessible directory.\n");
+        return 0;
+    }
     if (!open_listener(&server)) {
         if (server.listen_fd >= 0)
             miniftpd_close_socket(socket_base, server.listen_fd);

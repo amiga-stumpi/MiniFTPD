@@ -14,7 +14,7 @@ updated here in the same commit as its implementation.
 | 5 | Authentication | Complete |
 | 6 | Passive data connections | Complete |
 | 7 | Basic FTP commands | Complete |
-| 8 | Filesystem containment | Planned |
+| 8 | Filesystem containment | Complete |
 | 9 | Directory listings | Planned |
 | 10 | Downloads | Planned |
 | 11 | Uploads | Planned |
@@ -125,8 +125,8 @@ Status: **Complete**
 - Keep `SYST`, `FEAT`, `NOOP`, `USER`, `PASS` and `QUIT` available before
   authentication for broad FTP-client compatibility.
 - Implement authenticated `PWD`.
-- Implement safe root-only `CWD` and `CDUP` behavior until filesystem
-  containment is available.
+- Establish initial root-only `CWD` and `CDUP` behavior, extended to real
+  contained directories in step 8.
 - Retain authenticated `TYPE` and `PASV`.
 - Return standards-based status codes for unsupported directories and
   commands.
@@ -135,11 +135,19 @@ Status: **Complete**
 
 ## 8. Filesystem containment
 
+Status: **Complete**
+
 - Treat the configured root as an absolute security boundary.
-- Normalize virtual paths.
-- Prevent `..` traversal and Amiga device/volume escapes.
-- Validate names before joining Amiga paths.
-- Enforce read-only mode for every modifying command.
+- Verify at startup that the configured root exists and is a directory.
+- Normalize absolute and relative virtual FTP paths.
+- Reject traversal above the virtual root.
+- Reject control characters, quotes and Amiga device or volume separators.
+- Build DOS paths only from validated virtual path components.
+- Verify target ancestry with OS1.x-compatible DOS locks and `ParentDir()`.
+- Make `CWD` and `CDUP` operate on real directories inside the root.
+- Centralize read-only policy and reject `STOR` before transfer handling when
+  `readonly=1`.
+- Keep path and `FileInfoBlock` work buffers outside the process stack.
 
 ## 9. Directory listings
 
