@@ -2,6 +2,7 @@
 #include <exec/libraries.h>
 #include <dos/dos.h>
 #include <proto/dos.h>
+#include <proto/exec.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -43,6 +44,17 @@ static void console_number(const char *label, LONG value)
 
     sprintf(line, "%s%d\n", label, (int)value);
     console_write(line);
+}
+
+static int ctrl_c_pending(void)
+{
+    ULONG pending;
+
+    pending = SetSignal(0, 0);
+    if (!(pending & SIGBREAKF_CTRL_C))
+        return 0;
+    SetSignal(0, SIGBREAKF_CTRL_C);
+    return 1;
 }
 
 static int socket_would_block(int error)
@@ -92,7 +104,7 @@ static int wait_writable(struct MiniFtpdServer *server, int fd)
     signals = SIGBREAKF_CTRL_C;
     ready = miniftpd_wait_select(server->socket_base, fd + 1, 0,
                                  &g_writefds, 0, &g_timeout, &signals);
-    if (signals & SIGBREAKF_CTRL_C) {
+    if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
         server->stop_requested = 1;
         return -1;
     }
@@ -410,6 +422,8 @@ int miniftpd_server_run(struct Library *socket_base,
     console_write(line);
     running = 1;
     while (running) {
+        if (ctrl_c_pending())
+            break;
         MINIFTPD_FD_ZERO(&g_readfds);
         MINIFTPD_FD_SET(server.listen_fd, &g_readfds);
         highest_fd = server.listen_fd;
@@ -419,16 +433,11 @@ int miniftpd_server_run(struct Library *socket_base,
                 highest_fd = server.session.control_fd;
         }
         signals = SIGBREAKF_CTRL_C;
-        if (server.session.connection_state == MINIFTPD_SESSION_CONNECTED) {
-            g_timeout.tv_sec = 1;
-            g_timeout.tv_usec = 0;
-            ready = miniftpd_wait_select(socket_base, highest_fd + 1,
-                                         &g_readfds, 0, 0, &g_timeout, &signals);
-        } else {
-            ready = miniftpd_wait_select(socket_base, highest_fd + 1,
-                                         &g_readfds, 0, 0, 0, &signals);
-        }
-        if (signals & SIGBREAKF_CTRL_C) {
+        g_timeout.tv_sec = 1;
+        g_timeout.tv_usec = 0;
+        ready = miniftpd_wait_select(socket_base, highest_fd + 1,
+                                     &g_readfds, 0, 0, &g_timeout, &signals);
+        if ((signals & SIGBREAKF_CTRL_C) || ctrl_c_pending()) {
             running = 0;
             continue;
         }

@@ -21,6 +21,7 @@ Project steps 1 through 5 are complete:
 - effective configuration summary without password disclosure
 - one-client TCP control listener on the configured port
 - `WaitSelect()`-driven control connection handling
+- reliable Ctrl-C shutdown with direct Exec-signal fallback
 - bounded CRLF command parsing and partial socket-write handling
 - explicit connection, login and transfer-mode session state
 - configurable control-connection inactivity timeout

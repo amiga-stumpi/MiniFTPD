@@ -74,6 +74,8 @@ Status: **Complete**
 - Support `QUIT` as the first control command and return `502` for commands
   assigned to later phases.
 - Stop cleanly on Ctrl-C.
+- Poll the Exec break signal directly as a compatibility fallback for stacks
+  that do not return signals through `WaitSelect()`.
 
 ## 4. Session state
 
