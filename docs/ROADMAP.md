@@ -16,7 +16,7 @@ updated here in the same commit as its implementation.
 | 7 | Basic FTP commands | Complete |
 | 8 | Filesystem containment | Complete |
 | 9 | Directory listings | Complete |
-| 10 | Downloads | Planned |
+| 10 | Downloads | Complete |
 | 11 | Uploads | Planned |
 | 12 | Additional file commands | Planned |
 | 13 | Error handling and cleanup | Planned |
@@ -168,11 +168,18 @@ Status: **Complete**
 
 ## 10. Downloads
 
-- Implement `RETR`.
-- Allocate the transfer buffer explicitly.
-- Read and send in bounded blocks.
-- Handle partial socket writes and remote aborts.
-- Always close files and data sockets.
+Status: **Complete**
+
+- Implement authenticated `RETR` over passive data connections.
+- Resolve absolute and relative file paths through the containment layer.
+- Reject directories, missing files, traversal and Amiga device escapes.
+- Preflight the file and report its size in the `150` response.
+- Allocate a 16 KB transfer buffer with `AllocMem(MEMF_PUBLIC)`.
+- Read and send files in bounded blocks without loading the complete file.
+- Preserve file bytes exactly for reliable binary downloads.
+- Handle partial socket writes, stalled sockets and remote aborts.
+- Always close the file and data socket and free the transfer buffer.
+- Return `150`, `226`, `425`, `426`, `451` and `550` as appropriate.
 
 ## 11. Uploads
 

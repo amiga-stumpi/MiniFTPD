@@ -8,7 +8,7 @@ assumptions and large automatic buffers.
 
 ## Current status
 
-Project steps 1 through 9 are complete:
+Project steps 1 through 10 are complete:
 
 - standalone AmigaOS executable scaffold
 - bebbo GCC build using the Kickstart 1.3 `nix13` CRT
@@ -41,6 +41,8 @@ Project steps 1 through 9 are complete:
 - centralized enforcement of the `readonly` setting
 - passive `LIST` for current or explicitly selected contained directories
 - streamed Unix-style directory rows with file type and size
+- passive `RETR` downloads with byte-preserving block transfers
+- explicit 16 KB public-memory transfer buffer with complete cleanup
 
 Authenticated sessions accept the implemented discovery, authentication,
 directory, transfer-mode, passive-mode and shutdown commands. File listing,
@@ -145,6 +147,11 @@ After opening the passive data connection, `LIST`, `LIST -la` and `LIST test`
 stream directory rows to that connection. A successful transfer returns `150`
 before the listing and `226` after the data socket has closed. Standard FTP
 clients can perform this sequence with their normal `ls` command.
+
+Files can be downloaded with the standard FTP `get` command after selecting
+binary mode. `RETR` also accepts contained absolute and relative virtual paths.
+For byte-for-byte verification, compare the source and downloaded file sizes and
+checksums.
 
 ## Documentation
 
